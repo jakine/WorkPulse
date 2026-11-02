@@ -83,3 +83,33 @@ class Worker(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class TeamMembership(models.Model):
+    """One stretch of time a worker spent in a team. start_date is empty when it began before records were kept."""
+
+    worker = models.ForeignKey(Worker, on_delete=models.CASCADE, related_name="memberships")
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="memberships")
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = [models.F("start_date").desc(nulls_last=True), "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["worker"],
+                condition=models.Q(end_date__isnull=True),
+                name="one_open_team_per_worker",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(start_date__isnull=True)
+                    | models.Q(end_date__isnull=True)
+                    | models.Q(end_date__gte=models.F("start_date"))
+                ),
+                name="team_membership_dates_in_order",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.worker} in {self.team}"

@@ -1,0 +1,328 @@
+**WorkPulse** is a multi-company construction operations app. It is for **managers and team leads**, not a public website: you pick a company, see only that company’s crews, sites, stock, and daily work, then fill what got done.
+
+The product idea is: **one site (a project) can be run two ways at once** — a Jira-style task board, and a daily sheet of amounts — and both write the same daily reports.
+
+Phase 1 (branch `phase1-site-ops`) grew that into a site-operations core: who was on site each day, a daily log that a manager approves and locks, progress with forecasts and team performance, stock tied to the work it was used for, and photo/PDF uploads.
+
+---
+
+## What it is, in one picture
+
+```text
+Company (River Co, own time zone)
+  ├── People: teams, workers, optional leads
+  │     └── Team membership history (who was in which team, when)
+  ├── Catalogs: work kinds, measures (m²/m³), work types, statuses, phases, duration units
+  │     └── Material norms per work type (1.4 kg adhesive per m² of facade)
+  ├── Projects (sites / workplaces)
+  │     ├── Teams placed on the site, with dates
+  │     ├── Scopes (work type + planned quantity)
+  │     ├── Tasks (board / timeline)
+  │     ├── Sheet columns (how the table is set up)
+  │     ├── Site reports (what was done on a day)
+  │     ├── Crew attendance (which workers were on site on a day)
+  │     ├── Daily logs (one per day: notes, weather, issues, approval)
+  │     └── Material requests (site asks the depot for stock)
+  ├── Stock: depot + site locations, lots, movements, minimum levels
+  └── Attachments: photos and PDFs on any record
+```
+
+A **report** is the core fact: *this team, on this project, on this date, on this work type, did this quantity*. Progress is the sum of those reports. The sheet is just a grid over the same reports. The board is tasks that can be linked to a report.
+
+**The rule that holds it together:** every fact is a row that gets added, and every number on a screen is a sum of those rows. Phase 1 added new kinds of fact, never a second copy of an old one:
+
+| Fact | Table | Numbers built from it |
+|------|-------|-----------------------|
+| Work done | `SiteReport` | Progress, remaining, weekly output, forecast finish |
+| Crew on site | `CrewAttendance` | Worker-days, output per worker-day |
+| Material moved or used | `StockMovement` | Stock on hand, use per work type, expected vs actual |
+| Day signed off | `DailyLog` | Which days are locked |
+
+---
+
+## Who logs in and what they can do
+
+There are three roles on a **membership** (user ↔ company):
+
+| Role | Can |
+|------|-----|
+| **Owner** | Everything, including inviting people |
+| **Manager** | Everything except invites. Only managers approve/reopen days, edit the Planning board, set material norms and stock levels, and send or reject material requests. |
+| **Team lead** | Read projects their teams are on; fill reports and sheet cells for their teams; record crew attendance, issues, notes and photos on those days; record material used on their sites; request material; move/comment on tasks assigned to their teams |
+
+The active company lives in the **session** (`company_id`). Almost every API call does:
+
+1. Require login
+2. Require a membership for that session company
+3. Filter querysets to that company
+4. If the user is a team lead, narrow further (`scope_for_lead`) and only allow extra writes listed on the view as `lead_actions`
+
+That is the tenancy wall. Two companies never share rows; PKs can coincide, so activity lookups also filter by company. Every Phase 1 model has tests proving a second company cannot read or write it.
+
+Demo login (from seed): `manager@example.com` / `Manager-pass-123` on **River Co**. The seed also has a team lead (Mira) and demo data for every Phase 1 screen.
+
+---
+
+## How a real day of work flows
+
+**1. Company setup (once)**
+Owner/manager defines teams, workers, work types (`Facade plaster` in `m²`), duration units (`Day` / `Week` / `Month`), board statuses, phases, and the company **time zone**. "Today" everywhere (daily log, missing reports, stock defaults) is `company.today()`, not the server's date.
+
+**2. Open a project**
+A project is a `Workplace`: name, address, length (e.g. 4 months), optional headline work type. Creating it also creates a **SITE** stock location and a first **scope** if there is a headline work type.
+
+**3. Put teams on the project (Planning)**
+`WorkplaceTeam` is “Team 1 is on Bridge from 3 Nov to 28 Nov” (end date optional). The **Planning** page (`/planning`) shows teams as rows and days as columns. Placing a team on overlapping dates on two projects returns a **warning**, not an error. Reports refuse a team that is not placed on that project **on that date**.
+
+**4. Plan the work (scopes)**
+A **scope** is one work type on one project plus planned quantity. Example: Bridge has Facade plaster 800 m² and North slab in m³. Remaining is `planned − sum(reports for that scope)`. Amounts with different units are never added together.
+
+**5. Choose how to run the site**
+
+- **Board** — tasks with status, phase, team, optional work type. Drag between columns. Timeline groups by phase.
+- **Sheet** — you first **set up columns** (work type, team, or text). Then each row is a day. Typing a quantity POSTs to `/api/projects/{id}/sheet/` and upserts a `SiteReport` (or a text cell).
+- **Daily log** (the project tab formerly called Reports) — pick a day, then fill it in one place:
+  - Work done (the report rows)
+  - Crew on site (a checklist per team, prefilled from the team's members that day)
+  - Issues (delay, weather, material missing, no access, safety, other; hours lost)
+  - Materials used (consumption linked to a work type)
+  - Notes and weather
+  - Photos
+  - Day status (approve / reopen)
+
+Sheet and Daily log are two UIs on the same `SiteReport` table. Uniqueness is **one report per team + project + date + scope**. Same team can log facade and slab on the same day; they cannot log facade twice.
+
+**6. Approve the day**
+A manager approves the day and it **locks**. Any write to that project day returns 400 (“This day is approved. Reopen it before changing it.”): reports, sheet cells, attendance, issues, notes, and material used. The sheet shows approved days as read-only. Reopening unlocks it. Both are recorded in the activity feed.
+
+**7. Watch progress**
+The project Overview shows, per scope: % done, weekly output, output per worker-day, forecast finish, and an on-track / behind flag, plus each team's share. Each team page (`/teams/:id`) shows weekly output and pace per work type. The Home page lists active projects with their worst status, teams that have not reported today, low stock and expiring lots.
+
+**8. Stock**
+Depot receives material. Transfers go to a site. Consume/adjust are append-only movements. A **consume** on a site can name the work type it was used for. Lots can expire; the dashboard highlights that. A team lead can **request** material for a project; a manager sends all or part of it, and each sending is an ordinary depot → site transfer.
+
+---
+
+## How the pieces talk at runtime
+
+```text
+Browser :3001  (Create React App)
+    │  fetch("/api/...", credentials, X-CSRFToken)
+    ▼
+Frontend container proxies /api → backend:8001
+    ▼
+Django + DRF  (session auth + CSRF)
+    ▼
+Postgres 16        + media_data volume (uploaded files)
+```
+
+Docker Compose runs three containers: `workpulse_db`, `workpulse_backend`, `workpulse_frontend`. Backend migrates on start. Frontend `setupProxy.js` uses `API_PROXY_TARGET=http://backend:8001`.
+
+The React client (`frontend/src/api/client.js`) always:
+
+- hits `/api...` so the proxy applies
+- sends cookies (`credentials: "include"`)
+- sends CSRF on writes
+- unwraps paginated `{ results }` via `apiList` (`page_size=100`)
+- uploads files with `apiUpload(path, formData)` (CSRF header, no JSON content type)
+
+Auth is session, not JWT. Login sets the user and company in session; `AuthContext` loads `/api/auth/me/` on boot.
+
+Theme is local: `data-theme` on `<html>`, CSS variables, `workpulse-theme` in `localStorage`.
+
+---
+
+## Domain model (the important tables)
+
+**Identity & tenancy** (`accounts`, `companies`)
+User → Membership(role) → Company. Session stores which company is active. `Company.timezone` (default `UTC`) and `company.today()` decide what "today" means.
+
+**People** (`workforce`)
+`Team` (number, worker count, lead note, optional `lead_user`). `Worker` with type, optional team. Crew on a report is always a **team**, not an individual.
+`TeamMembership` (worker, team, start_date, end_date) is the history. At most one open stretch per worker (database constraint). `move_worker(worker, team, on_date)` closes the old stretch the day before and opens a new one. `Worker.team` stays as the current team, so older screens and APIs keep working. A team's size shows active members, with `worker_count` as the fallback for teams with no registered workers.
+
+**Catalogs** (`operations` + `work`)
+Same pattern everywhere: company-scoped name, `position`, unique `(company, name)`, `PROTECT` on FKs so you cannot delete a measure still used by a work type.
+
+- Work kind → measure (m²) → work type (category + measure)
+- Duration unit (`days_per_unit`, optional timeline step)
+- Task category → status; task phase
+
+Creating a company seeds defaults (To do / In progress / …, Day/Week/Month, Area/Volume, etc.).
+
+**Projects** (`operations.Workplace`)
+Still named “workplace” in the database; the UI says **project**. Routes exist as both `/api/projects/` and `/api/workplaces/`. `WorkplaceTeam` placements have `start_date` / `end_date`; `active_on(date)` (in `workforce/services.py`) is the one helper for "covers this date", used for placements and memberships alike.
+
+**Progress**
+`ProjectScope` holds planned quantity. Done is a **subquery Sum** of matching `SiteReport`s (not a join Sum, so rows do not explode). `scopes_with_progress()` annotates it on a whole queryset, so project lists no longer run one query per scope. Remaining is planned − done. Pace and forecasts live in `operations/progress.py` (see below).
+
+**Daily log** (`sitelog`, new app)
+- `DailyLog` — one per project + date: status `open` / `approved`, weather, notes, approved_by/at. Created on first write to that day.
+- `DailyLogIssue` — kind, description, hours lost, resolved.
+- `CrewAttendance` — worker + project + date + team; unique per worker per project day. The team must be placed on the project that day, workers must be active, and a worker can be on only one team's crew that day.
+- `ensure_day_open(workplace, date)` is the single lock check. Every write path for a project day calls it.
+
+**Work** (`work.Task`)
+Task belongs to company + project; optional team, work type, phase; status required. Comments and `ActivityEvent` (`core`) record created/moved/commented, and now day approved/reopened.
+
+**Attachments** (`core.Attachment`)
+Same generic `target_type` / `target_id` pattern as `ActivityEvent`, plus file, original name, content type, size, caption, uploader. Allowed: JPEG, PNG, WebP, PDF up to 15 MB; the file's first bytes must match its type. Files are stored as `attachments/company_<id>/<random>.<ext>` and downloaded only through `/api/attachments/{id}/file/`, which checks the company. There is no public `/media/` URL.
+
+**Sheet**
+`SheetColumn`: kind `work_type` | `team` | `text`.
+`SheetTextCell`: free text per column + date (e.g. weather).
+Quantity cells are not a third table — they **are** site reports.
+
+**Inventory**
+`Location` (DEPOT or SITE), lots, append-only movements. Receive only into depot. New in Phase 1:
+
+- `StockMovement.scope` — a consume can name the work type it was used for (only consumes, only that project's scopes).
+- `WorkTypeMaterial` — the material norm: quantity of an item per unit of a work type. Edited on the Work types page.
+- `StockLevel` — minimum quantity of an item at a location; below it, the item is on the "Running low" list.
+- `MaterialRequest` + `MaterialRequestLine` — status `open` / `partly_fulfilled` / `fulfilled` / `rejected`. Fulfilling creates TRANSFER movements through the normal `apply_movement`, tagged with the request.
+
+---
+
+## How progress and material numbers are computed
+
+All of this is plain functions over the fact rows. Nothing is stored.
+
+**Pace and forecast** (`operations/progress.py`)
+
+- daily rate = quantity in the last 10 working days (Mon–Fri) ÷ 10
+- forecast finish = today + remaining ÷ daily rate, counted in working days
+- planned finish = project start (or first report) + the scope's length
+- worker-days come from `CrewAttendance`. If a team reported two work types on one day, its worker-days are split by each report's share of the day.
+- output per worker-day = quantity ÷ worker-days (only for reports where crew was recorded); per team-day is always available
+- status, worst first: `behind` (forecast after planned finish), `stalled` (started, nothing in 10 working days), `no_plan`, `on_track`, `not_started`, `done`
+
+Endpoints: `GET /api/projects/{id}/progress/`, `GET /api/teams/{id}/performance/?from&to`, `GET /api/progress/` (company overview; leads see only their projects).
+
+**Material use** (`inventory/usage.py`)
+
+- expected = done × norm
+- actual = consume movements tagged with that scope
+- variance = actual − expected (a gap points to waste or missing records)
+- still needed = remaining × norm
+- shortage = still needed − stock at the site location
+- consumes with no work type show separately as "unassigned use"
+
+Endpoint: `GET /api/projects/{id}/materials/`. Shown on the project Stock tab.
+
+**Missing reports** (`sitelog/services.py`)
+`GET /api/daily-logs/missing/?date=` lists teams placed on an active project that day with no report from that team. Shown on the Home page.
+
+---
+
+## How code is organized
+
+### Repository layout
+
+```text
+workpulse/
+  docker-compose.yml
+  backend/          Django project
+    config/         settings, urls, pagination
+    accounts/       login, register, session, /me
+    companies/      Company (+ timezone), Membership, roles, seed_demo
+    workforce/      Team, Worker, TeamMembership, move_worker, active_on
+    operations/     projects, catalogs, reports, sheet, placements
+      progress.py   pace, forecasts, team performance, portfolio
+    work/           tasks, board statuses/phases
+    sitelog/        DailyLog, issues, crew attendance, day lock
+    inventory/      stock, norms, stock levels, material requests
+      usage.py      expected vs actual material, shortages
+    core/           activity feed, attachments
+  frontend/         CRA React 19
+    src/pages/      one route ≈ one screen
+    src/components/ reusable UI (board, sheet, calendar, day log, charts)
+    src/context/    auth + theme
+    src/api/        fetch wrapper
+```
+
+### Backend pattern (repeated in every app)
+
+| File | Job |
+|------|-----|
+| `models.py` | Tables and constraints |
+| `services.py` | Rules: create defaults, prepare report, upsert sheet cell, remaining, day lock, move worker |
+| `serializers.py` | Validate + shape JSON |
+| `views.py` / `viewsets.py` | HTTP: thin, call services |
+| `urls.py` | Mount under `/api/` |
+| `tests.py` | API tests with a logged-in client |
+
+Views inherit `CompanyScopedViewSet`: filter by company, set company on create, turn `ProtectedError` into 400 instead of a crash.
+
+Business logic stays in **services**, not in the view. Example: filling a report goes `ViewSet → Serializer.validate → prepare_site_report → create`. `prepare_site_report` checks the day is open and the team is placed on that date. Duplicate team+date+scope becomes a validation error, including on a race (`IntegrityError`).
+
+### Frontend pattern
+
+- **Pages** pick data and layout (`ProjectPage` has tabs: Overview, Board, Sheet, Timeline, Teams, Daily log, Stock).
+- **New pages:** `PlanningPage` (`/planning`), `TeamPage` (`/teams/:id`), `WorkerPage` (`/workers/:id`).
+- **Components** own a feature: `WorkSheet`, `DailyReports` + `ReportCalendar`, `DayLog`, `TaskBoard`, `TaskTimeline`, `ProjectProgress`, `SiteMaterials`, `MaterialUseForm`, `MaterialNorms`, `StockLevels`, `MaterialRequestsQueue`, `AttachmentGrid`.
+- **Charts** are small inline-SVG components in `charts.js`; no chart library.
+- **`ui.js`** is shared primitives (page header, fields, tabs) using CSS variables.
+- Sidebar: Work has **Daily log** (was Reports) and **Planning**. Managers see Work types / Workflow; leads do not.
+
+Calendar is shared: Daily log and Sheet both use `ReportCalendar` (day / week / month, today, marked dates).
+
+---
+
+## How the two “modes” stay consistent
+
+This is the main design choice.
+
+```text
+SiteReport  ←──  Daily log form (POST /api/site-reports/)
+     ▲
+     └──  Sheet cell (POST /api/projects/:id/sheet/)
+
+Both go through ensure_day_open(project, date) first.
+```
+
+If you type `20` on Facade plaster for 31 Oct in the sheet, the Daily log for that day shows the same 20 m². Progress, forecasts and expected material on Overview and the Stock tab use the same sums. Once a manager approves 31 Oct, neither screen can change it until it is reopened.
+
+Tasks are optional on a report. The board is for organizing work; the sheet/daily log are for measuring it. Linking a task on a report is how those worlds meet.
+
+---
+
+## What makes it maintainable
+
+**Strengths**
+
+1. **Company scoping in one place** — new list endpoints inherit the wall if they use `CompanyScopedViewSet`.
+2. **Catalogs are data, not hardcoded enums** — new statuses, phases, measures, duration units are rows + a small CRUD page.
+3. **Services over fat views** — uniqueness, remaining, sheet upsert, day lock, worker moves can be tested without the browser.
+4. **PROTECT on catalogs** — you cannot delete `m²` while plaster scopes exist; the API returns a clear 400.
+5. **Subquery sums** — progress stays correct as reports grow, and is annotated once per list instead of once per scope.
+6. **One lock, one date helper** — `ensure_day_open` and `active_on` are the only places those rules live.
+7. **Derived numbers are not stored** — forecasts, worker-day output and material variance are recomputed from facts, so they can never drift from them.
+8. **Migrations per slice** — operations 0008–0014, work 0001–0005, and for Phase 1: companies 0003 (timezone), core 0002 (attachments), workforce 0006 (memberships, with a data migration for existing workers), sitelog 0001, inventory 0005 (site materials).
+9. **Tests next to apps** — companies, workforce, operations, work, inventory, sitelog, core; currently **75** backend tests covering leads, tenancy for every new model, uniqueness, sheet columns, the day lock, placements, forecasts, material requests, uploads.
+10. **UI tokens** — colors/spacing in CSS variables, so dark/light is not a second copy of every page.
+
+**Honest limits (how “it is” today)**
+
+- Still a **dev stack**: `DEBUG=True`, committed secret key, default DB password, Django runserver + CRA. Fine for this repo, not production.
+- DB still says `Workplace`; UI says Project. That split is consistent but you must remember both names.
+- Frontend is CRA function components with `fetch`, not a typed API client. Pages can get large (`ProjectPage`, `WorkTypesPage`, `PlanningPage`).
+- Working days are Monday–Friday for forecasts; there is no holiday calendar yet.
+- The company overview (`/api/progress/`) computes each project in turn. Fine at demo scale, slow for hundreds of active projects.
+- Uploaded files live on a local Docker volume, not object storage.
+- Unique names are case-sensitive in the DB (`Foo` vs `foo`).
+- Seed is idempotent `get_or_create` for River Co; it is demo data, not a fixture framework.
+
+---
+
+## Mental model for changing it
+
+To add a feature, the usual path is:
+
+1. Company-scoped model + unique constraint + `PROTECT` if it is a catalog.
+2. Migration.
+3. `prepare_*` / `create_*` in `services.py`. If it writes to a project day, call `ensure_day_open`. If it has a date range, use `active_on`. If it needs "today", use `company.today()`.
+4. Serializer + ViewSet (`lead_actions` if leads should write).
+5. Test with `auth_client`, including a second company that must not see it.
+6. Small React page or tab that uses `api` / `apiList` (`apiUpload` for files).
+
+If you keep **facts as rows and numbers as sums**, board/sheet/daily log/stock stay views over the same data instead of competing databases of “what happened.” That is the thing that keeps WorkPulse coherent as it grows.

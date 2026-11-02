@@ -1,3 +1,4 @@
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from companies.models import Membership
@@ -66,3 +67,19 @@ def lead_projects(request):
         company=request.company,
         workplace_teams__team__lead_user=request.user,
     ).distinct()
+
+
+def visible_projects(request):
+    from operations.models import Workplace
+
+    projects = Workplace.objects.filter(company=request.company)
+    if is_team_lead(request):
+        projects = projects.filter(pk__in=lead_projects(request).values("pk"))
+    return projects
+
+
+def project_for(request, workplace_id):
+    workplace = visible_projects(request).filter(pk=workplace_id).first()
+    if workplace is None:
+        raise NotFound("Project not found.")
+    return workplace

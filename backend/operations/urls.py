@@ -1,7 +1,9 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from operations.views import (
     DurationUnitViewSet,
+    ProgressOverviewView,
     ProjectScopeViewSet,
     SheetColumnViewSet,
     SiteReportViewSet,
@@ -26,4 +28,4 @@ router.register("work-type-categories", WorkTypeCategoryViewSet, basename="work-
 router.register("work-types", WorkTypeViewSet, basename="work-type")
 router.register("site-reports", SiteReportViewSet, basename="site-report")
 
-urlpatterns = router.urls
+urlpatterns = [path("progress/", ProgressOverviewView.as_view(), name="progress-overview"), *router.urls]

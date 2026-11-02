@@ -1,13 +1,34 @@
+from datetime import date, timedelta
 from decimal import Decimal
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 
 from companies.models import Membership
 from companies.testing import auth_client, make_membership, make_user
 from inventory.models import Location
-from operations.models import DurationUnit, ProjectScope, SiteReport, WorkKind, WorkMeasure, WorkType, WorkTypeCategory
-from operations.services import create_default_duration_units, create_default_measures, default_duration_unit, default_work_category
-from workforce.models import Team, Worker
+from operations.models import (
+    DurationUnit,
+    ProjectScope,
+    SiteReport,
+    WorkKind,
+    WorkMeasure,
+    WorkplaceTeam,
+    WorkType,
+    WorkTypeCategory,
+)
+from operations.services import (
+    create_default_duration_units,
+    create_default_measures,
+    create_workplace,
+    default_duration_unit,
+    default_work_category,
+)
+from sitelog.models import CrewAttendance
+from work.models import TaskStatus
+from work.services import create_default_phases, create_default_statuses, create_task
+from workforce.models import Team, TeamMembership, Worker
 
 
 class OperationsApiTests(TestCase):
@@ -16,6 +37,73 @@ class OperationsApiTests(TestCase):
         self.membership = make_membership(self.user, "Sites")
         self.client = auth_client(self.user, self.membership.company)
         self.worker = Worker.objects.create(company=self.membership.company, name="Ada")
+
+    def test_project_list_queries_do_not_grow_with_scopes(self):
+        company = self.membership.company
+        create_default_measures(company)
+        category = default_work_category(company)
+        measure = WorkMeasure.objects.get(company=company, symbol="m²")
+
+        def make_project(name, scope_count):
+            project = self.client.post("/api/projects/", {"name": name, "status": "active"}, format="json").data
+            for index in range(scope_count):
+                work_type = WorkType.objects.create(
+                    company=company, category=category, measure=measure, name=f"{name} work {index}"
+                )
+                ProjectScope.objects.create(
+                    workplace_id=project["id"], work_type=work_type, planned_quantity=Decimal("100.00")
+                )
+
+        make_project("Small", 1)
+        with CaptureQueriesContext(connection) as small:
+            self.assertEqual(self.client.get("/api/projects/").status_code, 200)
+        make_project("Large", 4)
+        with CaptureQueriesContext(connection) as large:
+            listed = self.client.get("/api/projects/")
+        self.assertEqual(len(small), len(large))
+        self.assertEqual({row["name"] for row in listed.data["results"]}, {"Small", "Large"})
+
+    def test_reports_must_fall_inside_the_team_placement(self):
+        company = self.membership.company
+        team = Team.objects.create(company=company, name="Team 1", number=1)
+        project = self.client.post("/api/projects/", {"name": "Bridge", "status": "active"}, format="json").data
+        placed = self.client.post(
+            "/api/workplace-teams/",
+            {"workplace": project["id"], "team": team.id, "start_date": "2026-06-01", "end_date": "2026-06-30"},
+            format="json",
+        )
+        self.assertEqual(placed.status_code, 201)
+        report = {"workplace": project["id"], "team": team.id, "days": "1.00", "quantity": "10.00"}
+        inside = self.client.post("/api/site-reports/", {**report, "work_date": "2026-06-15"}, format="json")
+        self.assertEqual(inside.status_code, 201)
+        outside = self.client.post("/api/site-reports/", {**report, "work_date": "2026-07-02"}, format="json")
+        self.assertEqual(outside.status_code, 400)
+        self.assertIn("work_date", outside.data)
+
+    def test_placing_a_team_on_two_projects_at_once_warns_and_filters_by_dates(self):
+        company = self.membership.company
+        team = Team.objects.create(company=company, name="Team 1", number=1)
+        bridge = self.client.post("/api/projects/", {"name": "Bridge", "status": "active"}, format="json").data
+        yard = self.client.post("/api/projects/", {"name": "Yard", "status": "active"}, format="json").data
+        first = self.client.post(
+            "/api/workplace-teams/",
+            {"workplace": bridge["id"], "team": team.id, "start_date": "2026-06-01", "end_date": "2026-06-30"},
+            format="json",
+        )
+        self.assertEqual(first.data["warnings"], [])
+        second = self.client.post(
+            "/api/workplace-teams/",
+            {"workplace": yard["id"], "team": team.id, "start_date": "2026-06-20"},
+            format="json",
+        )
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(len(second.data["warnings"]), 1)
+        self.assertIn("Bridge", second.data["warnings"][0])
+
+        july = self.client.get("/api/workplace-teams/?active_from=2026-07-01&active_to=2026-07-31")
+        self.assertEqual([row["workplace_name"] for row in july.data["results"]], ["Yard"])
+        bad = self.client.get("/api/workplace-teams/?active_from=2026-07-31&active_to=2026-07-01")
+        self.assertEqual(bad.status_code, 400)
 
     def test_workplace_creates_a_site_stock_location(self):
         response = self.client.post(
@@ -582,3 +670,90 @@ class OperationsApiTests(TestCase):
         )
         self.assertEqual(reordered.status_code, 200, reordered.data)
         self.assertEqual([row["id"] for row in reordered.data], ids)
+
+
+class ProgressTests(TestCase):
+    """Plaster: 100 m² planned over 20 days from 1 June. 5 m² every weekday 1–12 June, plus 10 m² via a task on 5 June."""
+
+    def setUp(self):
+        self.owner = make_user("owner@example.com")
+        self.company = make_membership(self.owner, "River Co").company
+        self.client = auth_client(self.owner, self.company)
+        create_default_measures(self.company)
+        create_default_statuses(self.company)
+        create_default_phases(self.company)
+        measure = WorkMeasure.objects.get(company=self.company, symbol="m²")
+        plaster = WorkType.objects.create(
+            company=self.company, category=default_work_category(self.company), measure=measure, name="Plaster"
+        )
+        self.project = create_workplace(self.company, name="Bridge", status="active", start_date=date(2026, 6, 1))
+        self.scope = ProjectScope.objects.create(
+            workplace=self.project,
+            work_type=plaster,
+            planned_quantity=Decimal("100.00"),
+            length_count=20,
+            length_unit=default_duration_unit(self.company, "day"),
+        )
+        self.team = Team.objects.create(company=self.company, number=1, name="Mira's team")
+        WorkplaceTeam.objects.create(workplace=self.project, team=self.team, start_date=date(2026, 6, 1))
+        crew = []
+        for name in ("Mira", "Niko"):
+            worker = Worker.objects.create(company=self.company, name=name, team=self.team)
+            TeamMembership.objects.create(worker=worker, team=self.team, start_date=date(2026, 5, 1))
+            crew.append(worker)
+        day = date(2026, 6, 1)
+        while day <= date(2026, 6, 12):
+            if day.weekday() < 5:
+                SiteReport.objects.create(
+                    workplace=self.project, team=self.team, scope=self.scope, work_date=day, days=Decimal("1.00"), quantity=Decimal("5.00")
+                )
+                if day >= date(2026, 6, 8):
+                    for worker in crew:
+                        CrewAttendance.objects.create(workplace=self.project, team=self.team, worker=worker, work_date=day)
+            day += timedelta(days=1)
+        todo = TaskStatus.objects.get(company=self.company, name="To do")
+        task = create_task(self.company, self.project, self.owner, title="Plaster stair core", status=todo, work_type=plaster)
+        SiteReport.objects.create(
+            workplace=self.project, team=self.team, task=task, work_date=date(2026, 6, 5), days=Decimal("1.00"), quantity=Decimal("10.00")
+        )
+
+    def test_project_progress_gives_pace_forecast_and_status(self):
+        response = self.client.get(f"/api/projects/{self.project.pk}/progress/?as_of=2026-06-12")
+        self.assertEqual(response.status_code, 200)
+        scope = response.data["scopes"][0]
+        self.assertEqual((scope["done"], scope["remaining"], scope["percent"]), ("60.00", "40.00", "60.00"))
+        self.assertEqual(scope["recent_daily_rate"], "6.00")
+        self.assertEqual(scope["forecast_finish"], "2026-06-23")
+        self.assertEqual(scope["planned_finish"], "2026-06-20")
+        self.assertEqual(scope["status"], "behind")
+        self.assertEqual((scope["per_team_day"], scope["worker_days"], scope["per_worker_day"]), ("5.45", "10.00", "2.50"))
+        self.assertEqual(
+            [row for row in scope["weekly"] if row["quantity"] != "0.00"],
+            [{"week": "2026-06-01", "quantity": "35.00"}, {"week": "2026-06-08", "quantity": "25.00"}],
+        )
+        self.assertEqual([(row["team_name"], row["share_percent"]) for row in scope["by_team"]], [("Mira's team", "100.00")])
+
+    def test_a_scope_with_no_recent_reports_is_stalled(self):
+        scope = self.client.get(f"/api/projects/{self.project.pk}/progress/?as_of=2026-07-10").data["scopes"][0]
+        self.assertEqual(scope["status"], "stalled")
+        self.assertIsNone(scope["forecast_finish"])
+
+    def test_team_performance_by_work_type(self):
+        response = self.client.get(f"/api/teams/{self.team.pk}/performance/?from=2026-06-01&to=2026-06-12")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((response.data["days_reported"], response.data["crew_days"]), (10, 10))
+        plaster = response.data["work_types"][0]
+        self.assertEqual((plaster["name"], plaster["quantity"], plaster["per_worker_day"]), ("Plaster", "60.00", "2.50"))
+        self.assertEqual([row["name"] for row in response.data["projects"]], ["Bridge"])
+
+    def test_overview_flags_behind_projects_and_respects_leads(self):
+        overview = self.client.get("/api/progress/?as_of=2026-06-12")
+        self.assertEqual(overview.status_code, 200)
+        self.assertEqual(
+            [(row["name"], row["status"], row["scopes_behind"]) for row in overview.data["results"]], [("Bridge", "behind", 1)]
+        )
+        lead = make_user("arben@example.com")
+        Membership.objects.create(user=lead, company=self.company, role=Membership.Role.TEAM_LEAD)
+        lead_client = auth_client(lead, self.company)
+        self.assertEqual(lead_client.get("/api/progress/").data["results"], [])
+        self.assertEqual(lead_client.get(f"/api/teams/{self.team.pk}/performance/").status_code, 403)

@@ -20,6 +20,7 @@ from operations.models import (
     WorkTypeCategory,
 )
 from operations.services import days_for, done_for_scope, measure_symbol_for, prepare_sheet_column, prepare_site_report
+from sitelog.services import ensure_day_open
 from workforce.models import Team
 from workforce.services import ranges_overlap
 
@@ -131,6 +132,28 @@ class WorkplaceSerializer(serializers.ModelSerializer):
                 instance.remaining_quantity = None
                 instance.progress_percent = None
         return super().to_representation(instance)
+
+
+class AsOfSerializer(serializers.Serializer):
+    as_of = serializers.DateField(required=False)
+
+
+class PeriodSerializer(serializers.Serializer):
+    """Reads ?from=&to= (``from`` cannot be a class attribute name)."""
+
+    def get_fields(self):
+        return {"from": serializers.DateField(required=False), "to": serializers.DateField(required=False)}
+
+
+class DateRangeSerializer(serializers.Serializer):
+    active_from = serializers.DateField(required=False)
+    active_to = serializers.DateField(required=False)
+
+    def validate(self, attrs):
+        start, end = attrs.get("active_from"), attrs.get("active_to")
+        if start and end and end < start:
+            raise serializers.ValidationError({"active_to": "The end of the range must be on or after its start."})
+        return attrs
 
 
 class WorkplaceTeamSerializer(serializers.ModelSerializer):
@@ -266,7 +289,10 @@ class ProjectScopeSerializer(serializers.ModelSerializer):
         instance.length_days = days_for(instance.length_count, instance.length_unit)
         instance.done_quantity = done
         instance.remaining_quantity = instance.planned_quantity - done
-        instance.teams_placed = instance.workplace.workplace_teams.count()
+        teams_placed = getattr(instance, "teams_placed_total", None)
+        if teams_placed is None:
+            teams_placed = instance.workplace.workplace_teams.count()
+        instance.teams_placed = teams_placed
         return super().to_representation(instance)
 
     def validate_work_type(self, work_type):
@@ -520,6 +546,13 @@ class SiteReportSerializer(serializers.ModelSerializer):
 
     def get_measure_symbol(self, obj):
         return measure_symbol_for(task=obj.task, workplace=obj.workplace, scope=obj.scope)
+
+    def run_validators(self, value):
+        # Say the day is locked before the generic "must make a unique set" check can answer.
+        workplace = value.get("workplace") or getattr(self.instance, "workplace", None)
+        if workplace is not None and workplace.company_id == self.context["request"].company.id:
+            ensure_day_open(workplace, value.get("work_date", getattr(self.instance, "work_date", None)))
+        super().run_validators(value)
 
     def validate(self, attrs):
         request = self.context["request"]

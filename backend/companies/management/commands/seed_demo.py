@@ -4,11 +4,21 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 
 from companies.models import Company, Membership
 from companies.services import create_company
-from inventory.models import Location, StockItem, StockLot, StockType
-from inventory.services import apply_movement, receive_stock
+from inventory.models import (
+    Location,
+    MaterialRequest,
+    StockItem,
+    StockLevel,
+    StockLot,
+    StockMovement,
+    StockType,
+    WorkTypeMaterial,
+)
+from inventory.services import apply_movement, create_material_request, receive_stock
 from operations.models import (
     DurationUnit,
     ProjectScope,
@@ -31,7 +41,9 @@ from operations.services import (
 )
 from work.models import Task, TaskPhase, TaskStatus
 from work.services import create_default_phases, create_default_statuses, create_task
-from workforce.models import Team, Worker, WorkerType
+from sitelog.models import CrewAttendance, DailyLog, DailyLogIssue
+from workforce.models import Team, TeamMembership, Worker, WorkerType
+from workforce.services import move_worker
 
 User = get_user_model()
 
@@ -132,6 +144,13 @@ class Command(BaseCommand):
                 name=worker_name,
                 defaults={"worker_type": worker_type, "team": team, "status": Worker.Status.ACTIVE},
             )
+        team_starts = {team_mira.id: date(2026, 3, 1), team_arben.id: date(2026, 5, 1), team_lira.id: date(2026, 9, 1)}
+        for worker in Worker.objects.filter(company=company, team__isnull=False):
+            if not worker.memberships.exists():
+                TeamMembership.objects.create(worker=worker, team=worker.team, start_date=team_starts.get(worker.team_id))
+        valon = Worker.objects.get(company=company, name="Valon")
+        if valon.team_id == team_arben.id and not valon.memberships.filter(end_date__isnull=False).exists():
+            move_worker(valon, team_lira, date(2026, 10, 1))
         for team in (team_mira, team_arben, team_lira):
             count = team.members.filter(status=Worker.Status.ACTIVE).count()
             if team.worker_count != count:
@@ -339,6 +358,38 @@ class Command(BaseCommand):
         self._report(school, team_lira, date(2026, 10, 14), Decimal("1.00"), Decimal("60.00"), school_scope, "Grid A-C")
         self._report(school, team_lira, date(2026, 10, 15), Decimal("1.00"), Decimal("45.00"), school_scope, "Grid C-E")
 
+        people = {worker.name: worker for worker in Worker.objects.filter(company=company)}
+        for workplace, team, day, names in (
+            (bridge, team_mira, date(2026, 10, 8), ("Mira", "Niko", "Besnik")),
+            (bridge, team_mira, date(2026, 10, 9), ("Mira", "Niko", "Besnik", "Drita")),
+            (school, team_lira, date(2026, 10, 14), ("Lira", "Ana", "Valon")),
+            (school, team_lira, date(2026, 10, 15), ("Lira", "Ana")),
+        ):
+            for name in names:
+                CrewAttendance.objects.get_or_create(
+                    workplace=workplace, work_date=day, worker=people[name], defaults={"team": team}
+                )
+        approved, created = DailyLog.objects.get_or_create(
+            workplace=bridge,
+            work_date=date(2026, 10, 8),
+            defaults={"weather": "Dry, 16 °C", "notes": "East scaffold up. Inspector signed off the first lift."},
+        )
+        if created:
+            approved.status = DailyLog.Status.APPROVED
+            approved.approved_by = owner
+            approved.approved_at = timezone.now()
+            approved.save(update_fields=["status", "approved_by", "approved_at"])
+        for workplace, day, weather, kind, description, hours in (
+            (bridge, date(2026, 10, 9), "Cloudy, 14 °C", DailyLogIssue.Kind.MATERIAL, "Adhesive delivery came at 11:00", "1.50"),
+            (school, date(2026, 10, 15), "Rain from 15:00", DailyLogIssue.Kind.WEATHER, "Rain stopped outside work", "2.00"),
+        ):
+            log, _ = DailyLog.objects.get_or_create(workplace=workplace, work_date=day, defaults={"weather": weather})
+            DailyLogIssue.objects.get_or_create(
+                log=log,
+                description=description,
+                defaults={"kind": kind, "hours_lost": Decimal(hours), "created_by": owner},
+            )
+
         depot = Location.objects.filter(company=company, kind=Location.Kind.DEPOT).first()
         if depot is None:
             depot = Location.objects.create(company=company, name="Main yard", kind=Location.Kind.DEPOT)
@@ -354,6 +405,27 @@ class Command(BaseCommand):
         self._transfer(company, owner, cement, depot, site, Decimal("40.00"), date(2026, 6, 1), "To bridge")
         self._transfer(company, owner, rebar, depot, site, Decimal("6.00"), date(2026, 6, 1), "To bridge")
         self._consume(company, owner, cement, site, bridge, Decimal("12.00"), date(2026, 6, 3), "Slab pour")
+        StockMovement.objects.filter(
+            company=company, lot__item=cement, workplace=bridge, kind=StockMovement.Kind.CONSUME, scope__isnull=True
+        ).update(scope=slab_scope)
+
+        for work_type, item, per_unit in (
+            (work_types["North slab"], cement, Decimal("7")),
+            (work_types["North slab"], rebar, Decimal("0.1")),
+            (work_types["Facade plaster"], mesh, Decimal("0.02")),
+        ):
+            WorkTypeMaterial.objects.get_or_create(work_type=work_type, item=item, defaults={"quantity_per_unit": per_unit})
+        for item, location, minimum in ((cement, depot, Decimal("180.00")), (mesh, site, Decimal("5.00"))):
+            StockLevel.objects.get_or_create(item=item, location=location, defaults={"min_quantity": minimum})
+        if not MaterialRequest.objects.filter(company=company, workplace=bridge).exists():
+            create_material_request(
+                company=company,
+                workplace=bridge,
+                user=mira,
+                lines=[{"item": mesh, "quantity": Decimal("10.00")}],
+                needed_by=date(2026, 11, 6),
+                note="East elevation starts next week",
+            )
 
         self.stdout.write(self.style.SUCCESS(f"Demo data is ready for {company.name}."))
         self.stdout.write("Log in as:")
@@ -449,8 +521,6 @@ class Command(BaseCommand):
         )
 
     def _consume(self, company, person, item, location, workplace, quantity, happened_on, note):
-        from inventory.models import StockMovement
-
         if StockMovement.objects.filter(company=company, lot__item=item, workplace=workplace, kind="consume").exists():
             return
         lot = StockLot.objects.filter(item=item, location=location).first()

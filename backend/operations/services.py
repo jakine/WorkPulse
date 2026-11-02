@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.db import IntegrityError, transaction
-from django.db.models import Q, Sum
+from django.db.models import Count, DecimalField, IntegerField, OuterRef, Q, Subquery, Sum
 from django.db.models.functions import Coalesce
 from rest_framework.exceptions import ValidationError
 
@@ -16,7 +16,10 @@ from operations.models import (
     WorkMeasure,
     WorkTypeCategory,
     Workplace,
+    WorkplaceTeam,
 )
+from sitelog.services import ensure_day_open
+from workforce.services import active_on
 
 DEFAULT_KINDS = ("Area", "Volume", "Length", "Count", "Weight", "Time")
 
@@ -109,7 +112,40 @@ def reports_matching_scope(scope):
 
 
 def done_for_scope(scope):
+    done = getattr(scope, "done_total", None)
+    if done is not None:
+        return done
     return reports_matching_scope(scope).aggregate(total=Coalesce(Sum("quantity"), Decimal("0.00")))["total"]
+
+
+def scopes_with_progress(queryset):
+    """Annotate done_total (same match as reports_matching_scope) and teams_placed_total in one query."""
+    done = (
+        SiteReport.objects.filter(workplace=OuterRef("workplace"))
+        .filter(
+            Q(scope=OuterRef("pk"))
+            | Q(scope__isnull=True, task__work_type=OuterRef("work_type"))
+            | Q(scope__isnull=True, task__isnull=True, workplace__work_type=OuterRef("work_type"))
+        )
+        .order_by()
+        .values("workplace")
+        .annotate(total=Sum("quantity"))
+        .values("total")
+    )
+    teams = (
+        WorkplaceTeam.objects.filter(workplace=OuterRef("workplace"))
+        .order_by()
+        .values("workplace")
+        .annotate(total=Count("pk"))
+        .values("total")
+    )
+    return queryset.annotate(
+        done_total=Coalesce(
+            Subquery(done, output_field=DecimalField(max_digits=12, decimal_places=2)),
+            Decimal("0.00"),
+        ),
+        teams_placed_total=Coalesce(Subquery(teams, output_field=IntegerField()), 0),
+    )
 
 
 DEFAULT_WORK_CATEGORIES = ("General", "Site", "Structure", "Envelope", "Finishes", "MEP")
@@ -199,6 +235,27 @@ def create_workplace(company, **fields):
     return workplace
 
 
+def placements_between(queryset, start, end):
+    """Placements that cover any day from start to end (either may be None for an open side)."""
+    if start is not None:
+        queryset = queryset.filter(Q(end_date__isnull=True) | Q(end_date__gte=start))
+    if end is not None:
+        queryset = queryset.filter(start_date__lte=end)
+    return queryset
+
+
+def placement_warnings(placement):
+    others = placements_between(
+        WorkplaceTeam.objects.filter(team_id=placement.team_id).exclude(pk=placement.pk),
+        placement.start_date,
+        placement.end_date,
+    ).select_related("workplace", "team")
+    return [
+        f"{row.team.name} is also on {row.workplace.name} from {row.start_date} to {row.end_date or 'no end date'}."
+        for row in others
+    ]
+
+
 def sync_workplace_location(workplace):
     Location.objects.filter(workplace=workplace).update(name=workplace.name)
 
@@ -210,6 +267,9 @@ def prepare_site_report(attrs, instance=None):
     quantity = attrs["quantity"] if "quantity" in attrs else getattr(instance, "quantity", None)
     days = attrs.get("days", getattr(instance, "days", None))
 
+    ensure_day_open(workplace, work_date)
+    if instance is not None and (instance.workplace_id != workplace.id or instance.work_date != work_date):
+        ensure_day_open(instance.workplace, instance.work_date)
     if quantity is None or quantity <= 0:
         raise ValidationError({"quantity": "Enter how much was done."})
     if days is None or days <= 0:
@@ -218,8 +278,11 @@ def prepare_site_report(attrs, instance=None):
         raise ValidationError({"team": "Place a team on this project before filling a report."})
     if team is None:
         raise ValidationError({"team": "Choose the team that did this work."})
-    if not workplace.workplace_teams.filter(team=team).exists():
+    placements = workplace.workplace_teams.filter(team=team)
+    if not placements.exists():
         raise ValidationError({"team": "That team is not on this project."})
+    if work_date is not None and not placements.filter(active_on(work_date)).exists():
+        raise ValidationError({"work_date": "That team is not on this project on that date."})
     scope = attrs["scope"] if "scope" in attrs else getattr(instance, "scope", None)
     if scope is not None and scope.workplace_id != workplace.id:
         raise ValidationError({"scope": "Scope must belong to this project."})
@@ -254,6 +317,7 @@ def find_sheet_report(workplace, team, work_date, scope):
 
 
 def upsert_sheet_cell(*, workplace, team, work_date, scope, quantity, note=""):
+    ensure_day_open(workplace, work_date)
     existing = find_sheet_report(workplace, team, work_date, scope)
     if quantity is None or quantity == "" or Decimal(str(quantity)) <= 0:
         if existing is not None:
@@ -358,6 +422,7 @@ def resolve_sheet_column(column, workplace, *, team=None, scope=None):
 
 
 def upsert_sheet_text(*, column, work_date, text):
+    ensure_day_open(column.workplace, work_date)
     text = (text or "").strip()
     existing = SheetTextCell.objects.filter(column=column, work_date=work_date).first()
     if not text:

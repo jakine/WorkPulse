@@ -4,9 +4,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from companies.models import Membership
-from companies.permissions import IsCompanyMember, IsCompanyOwner
+from companies.permissions import HasCompanyRole, IsCompanyMember, IsCompanyOwner
 from companies.serializers import (
     CompanyCreateSerializer,
+    CompanySettingsSerializer,
     InviteSerializer,
     MembershipSerializer,
     SwitchSerializer,
@@ -25,6 +26,7 @@ def _company_data(membership):
     return {
         "id": membership.company_id,
         "name": membership.company.name,
+        "timezone": membership.company.timezone,
         "role": membership.role,
     }
 
@@ -42,9 +44,22 @@ class CompanyListCreateView(APIView):
         company = create_company(request.user, serializer.validated_data["name"].strip())
         request.session[COMPANY_SESSION_KEY] = company.id
         return Response(
-            {"id": company.id, "name": company.name, "role": Membership.Role.OWNER},
+            {"id": company.id, "name": company.name, "timezone": company.timezone, "role": Membership.Role.OWNER},
             status=status.HTTP_201_CREATED,
         )
+
+
+class CurrentCompanyView(APIView):
+    permission_classes = [IsAuthenticated, HasCompanyRole]
+
+    def get(self, request):
+        return Response(CompanySettingsSerializer(request.company).data)
+
+    def patch(self, request):
+        serializer = CompanySettingsSerializer(request.company, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class SwitchCompanyView(APIView):

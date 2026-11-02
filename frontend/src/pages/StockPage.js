@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiList } from "../api/client";
+import MaterialRequestsQueue from "../components/MaterialRequestsQueue";
+import StockLevels from "../components/StockLevels";
 import { ErrorText, Field, styles } from "../components/ui";
 import { useRole } from "../context/AuthContext";
 
@@ -71,6 +73,8 @@ function StockPage() {
         Stock is received into a depot. Using it on a project removes that quantity from the depot.
       </p>
       <ErrorText>{error}</ErrorText>
+      {canManage && <MaterialRequestsQueue onChange={() => load().catch((err) => setError(err.message))} />}
+      {canManage && <StockLevels items={items} locations={locations} version={lots} />}
 
       {!canManage && (
         <div style={styles.card}>

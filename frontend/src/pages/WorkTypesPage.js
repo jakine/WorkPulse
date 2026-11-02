@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiList } from "../api/client";
+import MaterialNorms from "../components/MaterialNorms";
 import { ErrorText, Field, styles } from "../components/ui";
 import { useRole } from "../context/AuthContext";
 
@@ -765,6 +766,7 @@ function WorkTypesPage() {
           </table>
         )}
       </div>
+      {canManage && <MaterialNorms />}
     </div>
   );
 }

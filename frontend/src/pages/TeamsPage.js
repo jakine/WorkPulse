@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, apiList } from "../api/client";
 import { ErrorText, Field, styles } from "../components/ui";
 import { useRole } from "../context/AuthContext";
@@ -88,7 +89,7 @@ function TeamsPage() {
           <Field label="Name">
             <input style={styles.input} value={form.name} onChange={(e) => setField("name", e.target.value)} required />
           </Field>
-          <Field label="Number of workers">
+          <Field label="Crew size (planned)">
             <input
               style={styles.input}
               type="number"
@@ -142,7 +143,8 @@ function TeamsPage() {
             <tr>
               <th style={styles.th}>Number</th>
               <th style={styles.th}>Name</th>
-              <th style={styles.th}>Workers</th>
+              <th style={styles.th}>Members</th>
+              <th style={styles.th}>Crew size</th>
               <th style={styles.th}>Team leads</th>
               <th style={styles.th}>Linked user</th>
               <th style={styles.th}></th>
@@ -152,7 +154,10 @@ function TeamsPage() {
             {teams.map((team) => (
               <tr key={team.id}>
                 <td style={styles.td}>{team.number}</td>
-                <td style={styles.td}>{team.name}</td>
+                <td style={styles.td}>
+                  <Link to={`/teams/${team.id}`}>{team.name}</Link>
+                </td>
+                <td style={styles.td}>{team.member_count}</td>
                 <td style={styles.td}>{team.worker_count}</td>
                 <td style={styles.td}>{team.lead_note || "—"}</td>
                 <td style={styles.td}>{team.lead_user_email || "—"}</td>

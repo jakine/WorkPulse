@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'inventory',
     'core',
     'work',
+    'sitelog',
 ]
 
 MIDDLEWARE = [
@@ -114,11 +115,11 @@ AUTH_PASSWORD_VALIDATORS = [
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:3000",
+    "http://localhost:3001",
 ).split(",")
 CSRF_TRUSTED_ORIGINS = os.getenv(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:3000",
+    "http://localhost:3001",
 ).split(",")
 
 REST_FRAMEWORK = {
@@ -148,6 +149,11 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Uploaded files are served through /api/attachments/<id>/file/ after a company check, never from MEDIA_URL.
+MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
+MEDIA_URL = "media/"
+ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

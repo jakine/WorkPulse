@@ -1,11 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, apiList } from "../api/client";
 import { getMe } from "../api/auth";
-import { useAuth } from "../context/AuthContext";
+import { useAuth, useRole } from "../context/AuthContext";
 import { ErrorText, Field, styles } from "../components/ui";
+
+function timeZoneOptions(current) {
+  const zones = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
+  return Array.from(new Set(["UTC", current, ...zones].filter(Boolean)));
+}
 
 function CompanyPage() {
   const { user, setUser } = useAuth();
+  const { canManage } = useRole();
+  const [settings, setSettings] = useState({ name: "", timezone: "UTC" });
+  const [saved, setSaved] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -16,6 +24,13 @@ function CompanyPage() {
   const [error, setError] = useState("");
 
   const company = user?.active_company;
+  const zones = useMemo(() => timeZoneOptions(company?.timezone), [company?.timezone]);
+
+  useEffect(() => {
+    if (!company) return;
+    setSettings({ name: company.name, timezone: company.timezone || "UTC" });
+    setSaved("");
+  }, [company]);
 
   async function refreshUser() {
     setUser(await getMe());
@@ -43,6 +58,19 @@ function CompanyPage() {
       await api("/companies/", { method: "POST", body: { name } });
       setName("");
       await refreshUser();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    setError("");
+    setSaved("");
+    try {
+      await api("/companies/current/", { method: "PATCH", body: settings });
+      await refreshUser();
+      setSaved("Saved.");
     } catch (err) {
       setError(err.message);
     }
@@ -116,6 +144,40 @@ function CompanyPage() {
           </ul>
         )}
       </div>
+
+      {company && canManage && (
+        <form onSubmit={saveSettings} style={styles.card}>
+          <h2 style={{ marginTop: 0 }}>Company settings</h2>
+          <p style={{ marginTop: 0 }}>The time zone decides which day counts as today for reports and stock.</p>
+          <div style={styles.row}>
+            <Field label="Name">
+              <input
+                style={styles.input}
+                value={settings.name}
+                onChange={(e) => setSettings((current) => ({ ...current, name: e.target.value }))}
+                required
+              />
+            </Field>
+            <Field label="Time zone">
+              <select
+                style={styles.input}
+                value={settings.timezone}
+                onChange={(e) => setSettings((current) => ({ ...current, timezone: e.target.value }))}
+              >
+                {zones.map((zone) => (
+                  <option key={zone} value={zone}>
+                    {zone}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <button style={styles.button} type="submit">
+              Save
+            </button>
+            {saved && <span style={{ color: "var(--muted)" }}>{saved}</span>}
+          </div>
+        </form>
+      )}
 
       {company?.role === "owner" && (
         <form onSubmit={invite} style={styles.card}>

@@ -184,6 +184,20 @@ function WorkSheet({ projectId, onChange }) {
     return [workDate];
   }, [rangeStep, workDate]);
 
+  const [approvedDates, setApprovedDates] = useState(() => new Set());
+  const firstDay = days[0];
+  const lastDay = days[days.length - 1];
+
+  useEffect(() => {
+    if (!activeId) {
+      setApprovedDates(new Set());
+      return;
+    }
+    apiList(`/daily-logs/?workplace=${activeId}&status=approved&from=${firstDay}&to=${lastDay}`)
+      .then((rows) => setApprovedDates(new Set(rows.map((row) => row.work_date))))
+      .catch((err) => setError(err.message));
+  }, [activeId, firstDay, lastDay]);
+
   function canEditTeam(teamId) {
     if (!teamId) return canManage;
     if (canManage) return true;
@@ -499,14 +513,22 @@ function WorkSheet({ projectId, onChange }) {
             <tbody>
               {days.map((date) => (
                 <tr key={date} style={{ background: isWeekend(date) ? "var(--surface-2)" : "transparent" }}>
-                  <td style={{ ...styles.td, whiteSpace: "nowrap", fontWeight: 600 }}>{formatDay(date)}</td>
+                  <td style={{ ...styles.td, whiteSpace: "nowrap", fontWeight: 600 }}>
+                    {formatDay(date)}
+                    {approvedDates.has(date) && (
+                      <span style={{ marginLeft: "0.4rem", fontSize: "0.72rem", fontWeight: 600, color: "var(--accent)" }}>
+                        Approved
+                      </span>
+                    )}
+                  </td>
                   {columns.map((column) => {
                     const target = cellTarget(column);
                     const report = column.kind === "text" ? null : reportFor(date, target.teamId, target.scopeId);
                     const disabled =
-                      column.kind === "text"
+                      approvedDates.has(date) ||
+                      (column.kind === "text"
                         ? false
-                        : !canEditTeam(target.teamId) || !target.teamId || !target.scopeId;
+                        : !canEditTeam(target.teamId) || !target.teamId || !target.scopeId);
                     return (
                       <td key={column.id} style={styles.td}>
                         <CellInput

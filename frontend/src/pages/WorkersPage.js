@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, apiList } from "../api/client";
 import { ErrorText, Field, styles } from "../components/ui";
 import { useRole } from "../context/AuthContext";
@@ -64,7 +65,7 @@ function WorkersPage() {
     <div style={styles.page}>
       <h1 style={{ margin: 0 }}>Workers</h1>
       <p style={{ margin: 0 }}>
-        A worker belongs to one team. The team’s size and leads stay on the team.
+        A worker belongs to one team at a time. Open a worker to move them and see their team history.
       </p>
       <ErrorText>{error}</ErrorText>
 
@@ -152,10 +153,12 @@ function WorkersPage() {
           <tbody>
             {workers.map((worker) => (
               <tr key={worker.id}>
-                <td style={styles.td}>{worker.name}</td>
+                <td style={styles.td}>
+                  <Link to={`/workers/${worker.id}`}>{worker.name}</Link>
+                </td>
                 <td style={styles.td}>{worker.worker_type_name || "—"}</td>
                 <td style={styles.td}>
-                  {worker.team_name ? `${worker.team_number} · ${worker.team_name}` : "—"}
+                  {worker.team ? <Link to={`/teams/${worker.team}`}>{worker.team_number} · {worker.team_name}</Link> : "—"}
                 </td>
                 <td style={styles.td}>{worker.status}</td>
               </tr>

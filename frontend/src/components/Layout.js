@@ -14,7 +14,8 @@ function navGroups(canManage) {
         { to: "/board", label: "Board" },
         { to: "/sheet", label: "Sheet" },
         { to: "/timeline", label: "Timeline" },
-        { to: "/reports", label: "Reports" },
+        { to: "/reports", label: "Daily log" },
+        { to: "/planning", label: "Planning" },
       ],
     },
     {

@@ -20,6 +20,19 @@
   --shadow: 0 1px 2px rgba(27, 24, 20, 0.05), 0 10px 28px rgba(27, 24, 20, 0.05);
   --radius: 12px;
   --radius-sm: 8px;
+  /* Project identity on the planning board: validated 8-slot categorical palette (fixed order). */
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-6: #008300;
+  --cat-7: #6250d6;
+  --cat-8: #e34948;
+  /* Status colors are fixed across themes and always shown with an icon and a label. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
   color-scheme: light;
 }
 
@@ -41,6 +54,14 @@
   --danger-soft: #3a1f1c;
   --warn: #e8c07a;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 16px 40px rgba(0, 0, 0, 0.28);
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --cat-7: #9085e9;
+  --cat-8: #e66767;
   color-scheme: dark;
 }
 

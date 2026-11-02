@@ -8,6 +8,9 @@ import LoginPage from "./pages/LoginPage";
 import StockPage from "./pages/StockPage";
 import TeamsPage from "./pages/TeamsPage";
 import WorkersPage from "./pages/WorkersPage";
+import WorkerPage from "./pages/WorkerPage";
+import TeamPage from "./pages/TeamPage";
+import PlanningPage from "./pages/PlanningPage";
 import BoardPage from "./pages/BoardPage";
 import ProjectPage from "./pages/ProjectPage";
 import ProjectsPage from "./pages/ProjectsPage";
@@ -36,7 +39,10 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/company" element={<CompanyPage />} />
             <Route path="/teams" element={<TeamsPage />} />
+            <Route path="/teams/:id" element={<TeamPage />} />
             <Route path="/workers" element={<WorkersPage />} />
+            <Route path="/workers/:id" element={<WorkerPage />} />
+            <Route path="/planning" element={<PlanningPage />} />
             <Route path="/work-types" element={<WorkTypesPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectPage />} />

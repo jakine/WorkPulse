@@ -1,10 +1,29 @@
+from zoneinfo import available_timezones
+
 from rest_framework import serializers
 
-from companies.models import Membership
+from companies.models import Company, Membership
 
 
 class CompanyCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200)
+
+
+class CompanySettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Company
+        fields = ["id", "name", "timezone"]
+
+    def validate_name(self, name):
+        name = name.strip()
+        if not name:
+            raise serializers.ValidationError("Enter a company name.")
+        return name
+
+    def validate_timezone(self, value):
+        if value not in available_timezones():
+            raise serializers.ValidationError("Choose a time zone from the list.")
+        return value
 
 
 class MembershipSerializer(serializers.ModelSerializer):

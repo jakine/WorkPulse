@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, apiList } from "../api/client";
+import DayLog from "./DayLog";
 import ReportCalendar, { formatLongDay, todayIso, weekDays } from "./ReportCalendar";
 import { ErrorText, Field, styles } from "./ui";
 
@@ -17,7 +18,20 @@ function DailyReports({ workplaceId, place: initialPlace, onPlaceChange }) {
     quantity: "",
     note: "",
   });
+  const [day, setDay] = useState(null);
   const [error, setError] = useState("");
+
+  const reloadDay = useCallback(async () => {
+    if (!workplaceId || mode !== "day") {
+      setDay(null);
+      return;
+    }
+    setDay(await api(`/daily-logs/day/?workplace=${workplaceId}&date=${workDate}`));
+  }, [workplaceId, workDate, mode]);
+
+  useEffect(() => {
+    reloadDay().catch((err) => setError(err.message));
+  }, [reloadDay]);
 
   const reload = useCallback(async () => {
     if (!workplaceId) {
@@ -74,7 +88,7 @@ function DailyReports({ workplaceId, place: initialPlace, onPlaceChange }) {
         },
       });
       setForm({ days: "1", team: form.team, task: "", scope: form.scope, quantity: "", note: "" });
-      await reload();
+      await Promise.all([reload(), reloadDay()]);
       if (onPlaceChange) onPlaceChange();
     } catch (err) {
       setError(err.message);
@@ -111,6 +125,12 @@ function DailyReports({ workplaceId, place: initialPlace, onPlaceChange }) {
         />
       </div>
 
+      {day?.status === "approved" ? (
+        <div style={styles.card}>
+          <h2 style={{ marginTop: 0 }}>{formatLongDay(workDate)} is approved</h2>
+          <p style={{ margin: 0 }}>Reports for this day are locked. A manager can reopen the day at the bottom of this page.</p>
+        </div>
+      ) : (
       <form onSubmit={fillReport} style={styles.card}>
         <h2 style={{ marginTop: 0 }}>Add report · {formatLongDay(workDate)}</h2>
         {(place.teams || []).length === 0 && <p>Place a team on this project before filling a report.</p>}
@@ -175,6 +195,7 @@ function DailyReports({ workplaceId, place: initialPlace, onPlaceChange }) {
           </button>
         </div>
       </form>
+      )}
 
       <div style={styles.card}>
         <h2 style={{ marginTop: 0 }}>{mode === "week" ? "Reports this week" : "Reports this day"}</h2>
@@ -212,6 +233,18 @@ function DailyReports({ workplaceId, place: initialPlace, onPlaceChange }) {
           </table>
         )}
       </div>
+
+      {mode === "day" && day && (
+        <DayLog
+          day={day}
+          workplaceId={workplaceId}
+          workDate={workDate}
+          onDay={(next) => {
+            setDay(next);
+            reload().catch((err) => setError(err.message));
+          }}
+        />
+      )}
     </div>
   );
 }

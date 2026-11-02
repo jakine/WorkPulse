@@ -1,3 +1,6 @@
+from datetime import date, datetime, timezone as dt_timezone
+from unittest import mock
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -142,3 +145,38 @@ class CompanyTenancyTests(TestCase):
         self.assertEqual(created.data["role"], Membership.Role.TEAM_LEAD)
         team.refresh_from_db()
         self.assertEqual(team.lead_user.email, "lead@example.com")
+
+
+class CompanySettingsTests(TestCase):
+    def setUp(self):
+        self.owner = make_user("owner@example.com")
+        self.membership = make_membership(self.owner, "River Co")
+        self.client = auth_client(self.owner, self.membership.company)
+
+    def test_owner_sets_the_company_time_zone(self):
+        response = self.client.patch("/api/companies/current/", {"timezone": "Europe/Tirane"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["timezone"], "Europe/Tirane")
+        me = self.client.get("/api/auth/me/")
+        self.assertEqual(me.data["active_company"]["timezone"], "Europe/Tirane")
+
+    def test_unknown_time_zone_is_rejected(self):
+        response = self.client.patch("/api/companies/current/", {"timezone": "Mars/Base"}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_team_lead_cannot_change_company_settings(self):
+        lead = make_user("lead@example.com")
+        Membership.objects.create(user=lead, company=self.membership.company, role=Membership.Role.TEAM_LEAD)
+        client = auth_client(lead, self.membership.company)
+        self.assertEqual(client.get("/api/companies/current/").status_code, 200)
+        response = client.patch("/api/companies/current/", {"timezone": "Europe/Tirane"}, format="json")
+        self.assertEqual(response.status_code, 403)
+
+    def test_today_follows_the_company_time_zone(self):
+        company = self.membership.company
+        late_evening_utc = datetime(2026, 11, 2, 23, 30, tzinfo=dt_timezone.utc)
+        with mock.patch("django.utils.timezone.now", return_value=late_evening_utc):
+            company.timezone = "UTC"
+            self.assertEqual(company.today(), date(2026, 11, 2))
+            company.timezone = "Europe/Tirane"
+            self.assertEqual(company.today(), date(2026, 11, 3))

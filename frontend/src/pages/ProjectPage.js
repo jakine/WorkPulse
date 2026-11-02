@@ -3,6 +3,8 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, apiList } from "../api/client";
 import ActivityList from "../components/ActivityList";
 import DailyReports from "../components/DailyReports";
+import ProjectProgress from "../components/ProjectProgress";
+import SiteMaterials from "../components/SiteMaterials";
 import TaskBoard from "../components/TaskBoard";
 import TaskTimeline from "../components/TaskTimeline";
 import WorkSheet from "../components/WorkSheet";
@@ -15,7 +17,7 @@ const TABS = [
   ["sheet", "Sheet"],
   ["timeline", "Timeline"],
   ["teams", "Teams"],
-  ["reports", "Reports"],
+  ["reports", "Daily log"],
   ["stock", "Stock"],
 ];
 
@@ -137,6 +139,7 @@ function Overview({ place, onChange }) {
           </strong>
         </div>
       </div>
+      <ProjectProgress projectId={place.id} />
       <div style={styles.card}>
         <h2 style={{ marginTop: 0 }}>Work scopes</h2>
         <p style={{ marginTop: 0 }}>
@@ -283,6 +286,7 @@ function TeamsTab({ place, onChange }) {
   const { canManage } = useRole();
   const [teams, setTeams] = useState([]);
   const [teamPlacement, setTeamPlacement] = useState({ team: "", start_date: "" });
+  const [warnings, setWarnings] = useState([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -295,11 +299,13 @@ function TeamsTab({ place, onChange }) {
   async function placeTeam(event) {
     event.preventDefault();
     setError("");
+    setWarnings([]);
     try {
-      await api("/workplace-teams/", {
+      const placed = await api("/workplace-teams/", {
         method: "POST",
         body: { workplace: place.id, team: Number(teamPlacement.team), start_date: teamPlacement.start_date },
       });
+      setWarnings(placed.warnings || []);
       setTeamPlacement({ team: "", start_date: "" });
       await onChange();
     } catch (err) {
@@ -323,6 +329,11 @@ function TeamsTab({ place, onChange }) {
     <div style={styles.card}>
       <h2 style={{ marginTop: 0 }}>Teams on this project</h2>
       <ErrorText>{error}</ErrorText>
+      {warnings.map((text) => (
+        <p key={text} style={{ margin: 0, color: "var(--warn)" }} role="status">
+          {text}
+        </p>
+      ))}
       {canManage && (
         <form onSubmit={placeTeam}>
           <p style={{ marginTop: 0 }}>Add one team or several. The same team can also work on other projects.</p>
@@ -411,54 +422,7 @@ function ReportsTab({ place, onChange }) {
 }
 
 function StockTab({ place }) {
-  const [lots, setLots] = useState(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    apiList("/locations/")
-      .then((locations) => {
-        const site = locations.find((row) => row.workplace === place.id);
-        return site ? apiList(`/stock-lots/?location=${site.id}`) : [];
-      })
-      .then(setLots)
-      .catch((err) => setError(err.message));
-  }, [place.id]);
-
-  return (
-    <div style={styles.card}>
-      <div style={{ ...styles.row, justifyContent: "space-between" }}>
-        <h2 style={{ margin: 0 }}>Stock on site</h2>
-        <Link to="/stock">Manage stock</Link>
-      </div>
-      <ErrorText>{error}</ErrorText>
-      {lots === null ? (
-        <p>Loading...</p>
-      ) : lots.length === 0 ? (
-        <p>No stock is on this project's site yet. Transfer stock here from a depot.</p>
-      ) : (
-        <table style={{ ...styles.table, marginTop: "1rem" }}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Item</th>
-              <th style={styles.th}>Quantity</th>
-              <th style={styles.th}>Expires</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lots.map((lot) => (
-              <tr key={lot.id}>
-                <td style={styles.td}>{lot.item_name}</td>
-                <td style={styles.td}>
-                  {lot.quantity} {lot.unit}
-                </td>
-                <td style={styles.td}>{lot.expires_on || "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
+  return <SiteMaterials place={place} />;
 }
 
 function ProjectPage() {
