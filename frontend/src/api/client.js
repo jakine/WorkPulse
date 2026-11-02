@@ -35,7 +35,20 @@ export async function api(path, { method = "GET", body } = {}) {
     credentials: "include",
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  return readResponse(response);
+}
 
+export async function apiUpload(path, formData) {
+  const response = await fetch(`/api${path}`, {
+    method: "POST",
+    headers: { Accept: "application/json", "X-CSRFToken": getCsrfToken() },
+    credentials: "include",
+    body: formData,
+  });
+  return readResponse(response);
+}
+
+async function readResponse(response) {
   const text = await response.text();
   let data = null;
   if (text) {

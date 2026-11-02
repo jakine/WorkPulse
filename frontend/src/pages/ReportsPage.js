@@ -23,8 +23,9 @@ function ReportsPage() {
 
   return (
     <div style={styles.page}>
-      <PageHeader title="Reports">
-        Start from today, or pick a day or week on the calendar, then add one or more reports for that day.
+      <PageHeader title="Daily log">
+        Pick a project and a day: who was on site, what got done, issues, photos and notes. A manager approves the day
+        when it is complete.
       </PageHeader>
       <ErrorText>{error}</ErrorText>
       <div style={styles.card}>

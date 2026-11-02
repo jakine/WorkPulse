@@ -1,13 +1,17 @@
 from decimal import Decimal
 
-from django.db.models import DecimalField, OuterRef, Subquery, Sum
+from django.db.models import DecimalField, OuterRef, Prefetch, Subquery, Sum
 from django.db.models.functions import Coalesce
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from companies.permissions import lead_projects
+from companies.permissions import HasCompanyRole, is_team_lead, lead_projects
 from companies.viewsets import CompanyScopedViewSet
 from core.services import record_event
+from inventory.usage import material_usage
+from sitelog.services import ensure_day_open
 from operations.models import (
     DurationUnit,
     ProjectScope,
@@ -21,7 +25,10 @@ from operations.models import (
     WorkType,
     WorkTypeCategory,
 )
+from operations.progress import portfolio, project_progress
 from operations.serializers import (
+    AsOfSerializer,
+    DateRangeSerializer,
     DurationUnitSerializer,
     KindReorderSerializer,
     ProjectScopeSerializer,
@@ -45,7 +52,10 @@ from operations.services import (
     reorder_duration_units,
     reorder_sheet_columns,
     reorder_kinds,
+    placement_warnings,
+    placements_between,
     reorder_work_categories,
+    scopes_with_progress,
     sync_workplace_location,
 )
 
@@ -63,8 +73,9 @@ def _with_progress(queryset):
         .annotate(total=Sum("days"))
         .values("total")
     )
+    scopes = scopes_with_progress(ProjectScope.objects.select_related("work_type__measure"))
     return queryset.select_related("work_type__category", "work_type__measure", "length_unit").prefetch_related(
-        "scopes__work_type__measure"
+        Prefetch("scopes", queryset=scopes)
     ).annotate(
         done_quantity=Coalesce(
             Subquery(done, output_field=DecimalField(max_digits=12, decimal_places=2)),
@@ -75,6 +86,11 @@ def _with_progress(queryset):
             Decimal("0.00"),
         ),
     )
+
+
+def _with_scope_progress(columns):
+    scopes = scopes_with_progress(ProjectScope.objects.select_related("work_type__measure"))
+    return columns.prefetch_related(Prefetch("scope", queryset=scopes))
 
 
 class WorkplaceViewSet(CompanyScopedViewSet):
@@ -99,13 +115,26 @@ class WorkplaceViewSet(CompanyScopedViewSet):
         data = self.get_serializer(workplace).data
         teams = workplace.workplace_teams.select_related("team__lead_user", "workplace")
         data["teams"] = WorkplaceTeamSerializer(teams, many=True, context={"request": request}).data
-        scopes = workplace.scopes.select_related("work_type__category", "work_type__measure", "length_unit")
+        scopes = scopes_with_progress(
+            workplace.scopes.select_related("work_type__category", "work_type__measure", "length_unit")
+        )
         data["scopes"] = ProjectScopeSerializer(scopes, many=True, context={"request": request}).data
-        columns = workplace.sheet_columns.select_related("scope__work_type__measure", "team")
+        columns = _with_scope_progress(workplace.sheet_columns.select_related("team"))
         data["sheet_columns"] = SheetColumnSerializer(columns, many=True, context={"request": request}).data
         texts = SheetTextCell.objects.filter(column__workplace=workplace)
         data["sheet_texts"] = SheetTextCellSerializer(texts, many=True, context={"request": request}).data
         return Response(data)
+
+    @action(detail=True, methods=["get"])
+    def materials(self, request, pk=None):
+        return Response(material_usage(self.get_object()))
+
+    @action(detail=True, methods=["get"])
+    def progress(self, request, pk=None):
+        workplace = self.get_object()
+        query = AsOfSerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        return Response(project_progress(workplace, query.validated_data.get("as_of") or request.company.today()))
 
     @action(detail=True, methods=["post"])
     def sheet(self, request, pk=None):
@@ -168,13 +197,59 @@ class WorkplaceTeamViewSet(CompanyScopedViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        workplace_id = self.request.query_params.get("workplace")
-        team_id = self.request.query_params.get("team")
+        params = self.request.query_params
+        workplace_id = params.get("workplace")
+        team_id = params.get("team")
         if workplace_id:
             queryset = queryset.filter(workplace_id=workplace_id)
         if team_id:
             queryset = queryset.filter(team_id=team_id)
+        if params.get("active_from") or params.get("active_to"):
+            dates = DateRangeSerializer(data=params)
+            dates.is_valid(raise_exception=True)
+            queryset = placements_between(
+                queryset,
+                dates.validated_data.get("active_from"),
+                dates.validated_data.get("active_to"),
+            )
         return queryset
+
+    def _record(self, verb, placement):
+        record_event(
+            self.request,
+            verb,
+            placement,
+            project=placement.workplace,
+            data={
+                "team": placement.team.name,
+                "start_date": str(placement.start_date),
+                "end_date": str(placement.end_date) if placement.end_date else "",
+            },
+        )
+
+    def perform_create(self, serializer):
+        placement = serializer.save()
+        self._record("team.placed", placement)
+        self.warnings = placement_warnings(placement)
+
+    def perform_update(self, serializer):
+        placement = serializer.save()
+        self._record("team.placement_changed", placement)
+        self.warnings = placement_warnings(placement)
+
+    def perform_destroy(self, instance):
+        self._record("team.removed", instance)
+        instance.delete()
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        response.data["warnings"] = self.warnings
+        return response
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        response.data["warnings"] = self.warnings
+        return response
 
 
 class DurationUnitViewSet(CompanyScopedViewSet):
@@ -192,7 +267,7 @@ class DurationUnitViewSet(CompanyScopedViewSet):
 
 class SheetColumnViewSet(CompanyScopedViewSet):
     serializer_class = SheetColumnSerializer
-    queryset = SheetColumn.objects.select_related("workplace", "scope__work_type__measure", "team")
+    queryset = _with_scope_progress(SheetColumn.objects.select_related("workplace", "team"))
     company_lookup = "workplace__company"
     pagination_class = None
 
@@ -220,11 +295,13 @@ class SheetColumnViewSet(CompanyScopedViewSet):
 
 class ProjectScopeViewSet(CompanyScopedViewSet):
     serializer_class = ProjectScopeSerializer
-    queryset = ProjectScope.objects.select_related(
-        "workplace",
-        "work_type__category",
-        "work_type__measure",
-        "length_unit",
+    queryset = scopes_with_progress(
+        ProjectScope.objects.select_related(
+            "workplace",
+            "work_type__category",
+            "work_type__measure",
+            "length_unit",
+        )
     )
     company_lookup = "workplace__company"
 
@@ -318,3 +395,26 @@ class SiteReportViewSet(CompanyScopedViewSet):
             project=report.workplace,
             data={"work_date": str(report.work_date), "quantity": str(report.quantity)},
         )
+
+    def perform_destroy(self, instance):
+        ensure_day_open(instance.workplace, instance.work_date)
+        record_event(
+            self.request,
+            "report.deleted",
+            instance,
+            project=instance.workplace,
+            data={"work_date": str(instance.work_date)},
+        )
+        instance.delete()
+
+
+class ProgressOverviewView(APIView):
+    permission_classes = [IsAuthenticated, HasCompanyRole]
+
+    def get(self, request):
+        query = AsOfSerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        workplaces = Workplace.objects.filter(company=request.company)
+        if is_team_lead(request):
+            workplaces = workplaces.filter(pk__in=lead_projects(request).values("pk"))
+        return Response(portfolio(workplaces, query.validated_data.get("as_of") or request.company.today()))

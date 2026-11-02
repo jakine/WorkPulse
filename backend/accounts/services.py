@@ -43,7 +43,12 @@ def user_payload(user, request):
     memberships = memberships_for_user(user)
     active_id = request.session.get(COMPANY_SESSION_KEY)
     companies = [
-        {"id": membership.company_id, "name": membership.company.name, "role": membership.role}
+        {
+            "id": membership.company_id,
+            "name": membership.company.name,
+            "timezone": membership.company.timezone,
+            "role": membership.role,
+        }
         for membership in memberships
     ]
     active = next((company for company in companies if company["id"] == active_id), None)

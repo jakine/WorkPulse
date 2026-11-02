@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiList } from "../api/client";
-import { useRole } from "../context/AuthContext";
+import { useAuth, useRole } from "../context/AuthContext";
 import ActivityList from "./ActivityList";
+import AttachmentGrid from "./AttachmentGrid";
 import { ErrorText, Field, PRIORITIES, PriorityBadge, WorkTypeOptions, formatWhen, styles } from "./ui";
 
 const panelStyle = {
@@ -39,7 +40,8 @@ function toForm(task) {
 }
 
 function TaskPanel({ taskId, statuses, onClose, onChange }) {
-  const { canManage } = useRole();
+  const { user } = useAuth();
+  const { canManage, isLead } = useRole();
   const [task, setTask] = useState(null);
   const [form, setForm] = useState(null);
   const [teams, setTeams] = useState([]);
@@ -282,6 +284,18 @@ function TaskPanel({ taskId, statuses, onClose, onChange }) {
               </div>
             </div>
           )}
+
+          <section>
+            <h3 style={{ margin: "0 0 0.5rem" }}>Photos and files</h3>
+            <AttachmentGrid
+              targetType="work.task"
+              targetId={task.id}
+              canUpload={
+                canManage ||
+                (isLead && teams.some((row) => row.team === task.team && row.lead_user === user?.id))
+              }
+            />
+          </section>
 
           <section>
             <h3 style={{ margin: "0 0 0.5rem" }}>Comments</h3>

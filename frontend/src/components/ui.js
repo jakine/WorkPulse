@@ -192,3 +192,23 @@ export function formatWhen(value) {
   if (!value) return "";
   return new Date(value).toLocaleString();
 }
+
+export function companyToday(company) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: company?.timezone || undefined,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${value.year}-${value.month}-${value.day}`;
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+export function formatDay(value) {
+  if (!value) return "";
+  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}

@@ -1,9 +1,13 @@
+from zoneinfo import ZoneInfo
+
 from django.conf import settings
 from django.db import models
+from django.utils.timezone import localdate
 
 
 class Company(models.Model):
     name = models.CharField(max_length=200)
+    timezone = models.CharField(max_length=64, default="UTC")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -11,6 +15,9 @@ class Company(models.Model):
 
     def __str__(self):
         return self.name
+
+    def today(self):
+        return localdate(timezone=ZoneInfo(self.timezone))
 
 
 class Membership(models.Model):
