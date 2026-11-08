@@ -221,6 +221,7 @@ def weekly(days):
 
 
 def cell_json(day, today, project_names):
+    """`editable`: hours can be typed straight into the cell (not on a full day off or an unworked holiday)."""
     site = day.site_entries
     editable = (
         day.counted
@@ -229,6 +230,8 @@ def cell_json(day, today, project_names):
         and day.date <= today
         and len(site) == len(day.entries) <= 1
         and not any(entry["day_approved"] for entry in site)
+        and not (day.leave is not None and not day.leave.half_day)
+        and not (day.holiday and not day.worked)
     )
     off = None
     shown = day.leave or day.waiting

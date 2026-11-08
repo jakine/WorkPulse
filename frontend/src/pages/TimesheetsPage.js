@@ -134,9 +134,8 @@ function Cell({ row, day, cell, canManage, onSave, onOpen }) {
   };
   const label = `${row.name}, ${formatDay(day.date)}`;
   const worked = Number(cell?.worked || 0);
-  const fullDayOff = cell?.off && !cell.off.half_day && cell.off.status === "approved";
 
-  if (canManage && cell?.editable && !fullDayOff && !(day.holiday && !worked)) {
+  if (canManage && cell?.editable) {
     return (
       <td style={style}>
         <HoursInput
