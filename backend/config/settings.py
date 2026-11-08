@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     'core',
     'work',
     'sitelog',
+    'timesheets',
+    'payroll',
 ]
 
 MIDDLEWARE = [

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from sitelog.models import DailyLog, DailyLogIssue
@@ -20,6 +22,18 @@ class ReopenSerializer(DayQuerySerializer):
 class AttendanceSerializer(DayQuerySerializer):
     team = serializers.IntegerField(min_value=1)
     worker_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=True)
+    hours = serializers.DictField(
+        child=serializers.DecimalField(
+            max_digits=4, decimal_places=2, min_value=Decimal("0.25"), max_value=Decimal("24")
+        ),
+        required=False,
+    )
+
+    def validate_hours(self, value):
+        try:
+            return {int(worker_id): hours for worker_id, hours in value.items()}
+        except ValueError:
+            raise serializers.ValidationError("Use worker ids as keys.")
 
 
 class MissingQuerySerializer(serializers.Serializer):

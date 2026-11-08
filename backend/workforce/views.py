@@ -10,6 +10,8 @@ from companies.viewsets import CompanyScopedViewSet
 from core.services import record_event
 from operations.progress import WEEKS_SHOWN, team_performance, week_start
 from operations.serializers import PeriodSerializer, WorkplaceTeamSerializer
+from timesheets.periods import pay_group_for
+from timesheets.services import schedule_for
 from workforce.models import Team, Worker, WorkerType
 from workforce.serializers import (
     TeamMembershipSerializer,
@@ -76,6 +78,8 @@ class WorkerViewSet(CompanyScopedViewSet):
         data = self.get_serializer(worker).data
         stretches = worker.memberships.select_related("worker__worker_type", "team")
         data["memberships"] = TeamMembershipSerializer(stretches, many=True).data
+        data["schedule"] = schedule_for(worker, worker.company.today())
+        data["pay_group"] = pay_group_for(worker)
         return data
 
     def retrieve(self, request, *args, **kwargs):

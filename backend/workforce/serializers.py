@@ -1,5 +1,8 @@
 from rest_framework import serializers
 
+from timesheets.locks import ensure_group_open
+from timesheets.periods import default_pay_group, has_approved_periods
+from timesheets.services import check_employment_change
 from workforce.models import Team, TeamMembership, Worker, WorkerType
 from workforce.services import move_worker
 
@@ -75,7 +78,19 @@ class WorkerSerializer(serializers.ModelSerializer):
             "team",
             "team_name",
             "team_number",
+            "hired_on",
+            "left_on",
+            "leave_allowance",
         ]
+
+    def validate(self, attrs):
+        hired_on = attrs.get("hired_on", getattr(self.instance, "hired_on", None))
+        left_on = attrs.get("left_on", getattr(self.instance, "left_on", None))
+        if hired_on and left_on and left_on < hired_on:
+            raise serializers.ValidationError({"left_on": "The last working day can't be before the first."})
+        if self.instance is not None:
+            check_employment_change(self.instance, hired_on, left_on)
+        return attrs
 
     def validate_team(self, team):
         if team is None:
@@ -86,6 +101,13 @@ class WorkerSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         team = validated_data.pop("team", None)
+        company = validated_data["company"]
+        if has_approved_periods(company):
+            # Once hours are approved, a new worker starts today unless told otherwise,
+            # so they don't appear in approved periods as days nobody recorded.
+            if "hired_on" not in validated_data:
+                validated_data["hired_on"] = company.today()
+            ensure_group_open(default_pay_group(company), validated_data["hired_on"])
         worker = super().create(validated_data)
         if team is not None:
             worker = move_worker(worker, team, worker.company.today())

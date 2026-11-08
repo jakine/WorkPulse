@@ -7,6 +7,7 @@ function getCsrfToken() {
 
 function formatError(data) {
   if (!data) return "Request failed.";
+  if (Array.isArray(data)) return data.map(String).join(" ");
   if (typeof data.detail === "string") return data.detail;
   if (Array.isArray(data.detail)) return data.detail.map(String).join(" ");
   if (typeof data === "object") {

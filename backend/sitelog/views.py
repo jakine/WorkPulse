@@ -1,5 +1,3 @@
-from collections import defaultdict
-
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -25,6 +23,8 @@ from sitelog.serializers import (
 )
 from sitelog.services import (
     approve_day,
+    available_on,
+    default_hours,
     ensure_day_open,
     log_for,
     missing_reports,
@@ -33,8 +33,19 @@ from sitelog.services import (
     set_attendance,
     update_day,
 )
+from timesheets.leave import approved_off
+from timesheets.schedule import WorkCalendar
 from workforce.models import Team, Worker
 from workforce.services import team_members_on
+
+
+def off_label(leave, sees_type):
+    """Leads only see the kind of day off for their own team's workers."""
+    if leave is None:
+        return None
+    if not sees_type:
+        return {"code": "", "name": "Off", "half_day": leave.half_day}
+    return {"code": leave.leave_type.code, "name": leave.leave_type.name, "half_day": leave.half_day}
 
 
 class DailyLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
@@ -62,17 +73,24 @@ class DailyLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         reports = SiteReport.objects.filter(workplace=workplace, work_date=work_date).select_related(
             "workplace__work_type__measure", "team", "task__work_type__measure", "scope__work_type__measure"
         )
-        present = defaultdict(set)
+        hours = {}
         attendance = list(CrewAttendance.objects.filter(workplace=workplace, work_date=work_date).select_related("worker"))
         for row in attendance:
-            present[row.team_id].add(row.worker_id)
+            hours[row.team_id, row.worker_id] = row.hours
         reported = {report.team_id for report in reports}
-        teams = []
+        off = approved_off(Worker.objects.filter(company=workplace.company), work_date)
+        crews = []
         for placement in placements_on(workplace, work_date):
             team = placement.team
-            members = list(team_members_on(team, work_date).filter(status=Worker.Status.ACTIVE).order_by("name"))
+            members = [worker for worker in team_members_on(team, work_date).order_by("name") if available_on(worker, work_date)]
             member_ids = {worker.pk for worker in members}
             extras = [row.worker for row in attendance if row.team_id == team.pk and row.worker_id not in member_ids]
+            crews.append((team, members + extras, member_ids))
+        everyone = {worker.pk: worker for _, crew, _ in crews for worker in crew}
+        calendar = WorkCalendar(workplace.company, everyone.values(), work_date, work_date)
+        teams = []
+        for team, crew, member_ids in crews:
+            sees_type = not is_team_lead(request) or team.lead_user_id == request.user.id
             teams.append(
                 {
                     "team": team.pk,
@@ -80,15 +98,18 @@ class DailyLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                     "team_name": team.name,
                     "lead_user": team.lead_user_id,
                     "reported": team.pk in reported,
-                    "present_count": len(present[team.pk]),
+                    "present_count": sum(1 for worker in crew if (team.pk, worker.pk) in hours),
                     "crew": [
                         {
                             "worker": worker.pk,
                             "name": worker.name,
                             "member": worker.pk in member_ids,
-                            "present": worker.pk in present[team.pk],
+                            "present": (team.pk, worker.pk) in hours,
+                            "hours": str(hours[team.pk, worker.pk]) if (team.pk, worker.pk) in hours else None,
+                            "expected_hours": str(default_hours(calendar, worker, work_date)),
+                            "off": off_label(off.get(worker.pk), sees_type),
                         }
-                        for worker in members + extras
+                        for worker in crew
                     ],
                 }
             )
@@ -164,7 +185,7 @@ class DailyLogViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         workers = list(Worker.objects.filter(company=request.company, pk__in=data["worker_ids"]))
         if len(workers) != len(set(data["worker_ids"])):
             return Response({"worker_ids": ["Choose workers from this company."]}, status=400)
-        set_attendance(workplace=workplace, work_date=data["date"], team=team, workers=workers)
+        set_attendance(workplace=workplace, work_date=data["date"], team=team, workers=workers, hours=data.get("hours"))
         return Response(self._day(request, workplace, data["date"]))
 
     @action(detail=False, methods=["get"])

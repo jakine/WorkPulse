@@ -7,6 +7,9 @@ from rest_framework.exceptions import ValidationError
 from companies.exceptions import Conflict
 from companies.models import Company, Membership
 from operations.services import create_default_duration_units, create_default_measures, create_default_work_categories
+from timesheets.leave import create_default_leave_types
+from timesheets.periods import default_pay_group
+from timesheets.services import create_default_schedule
 from work.services import create_default_phases, create_default_statuses
 
 COMPANY_SESSION_KEY = "company_id"
@@ -31,6 +34,9 @@ def create_company(user, name):
         create_default_work_categories(company)
         create_default_statuses(company)
         create_default_phases(company)
+        create_default_schedule(company)
+        create_default_leave_types(company)
+        default_pay_group(company)
     return company
 
 

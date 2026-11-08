@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -79,7 +79,9 @@ class DailyLogIssue(models.Model):
 
 
 class CrewAttendance(models.Model):
-    """A worker was on site with a team on a project day."""
+    """A worker was on site with a team on a project day, for this many hours.
+
+    Workers and teams with recorded crew can't be deleted (RESTRICT), so hours are never lost."""
 
     workplace = models.ForeignKey(
         "operations.Workplace",
@@ -87,8 +89,13 @@ class CrewAttendance(models.Model):
         related_name="attendance",
     )
     work_date = models.DateField()
-    team = models.ForeignKey("workforce.Team", on_delete=models.CASCADE, related_name="attendance")
-    worker = models.ForeignKey("workforce.Worker", on_delete=models.CASCADE, related_name="attendance")
+    team = models.ForeignKey("workforce.Team", on_delete=models.RESTRICT, related_name="attendance")
+    worker = models.ForeignKey("workforce.Worker", on_delete=models.RESTRICT, related_name="attendance")
+    hours = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.25")), MaxValueValidator(Decimal("24"))],
+    )
 
     class Meta:
         ordering = ["work_date", "team__number", "worker__name"]
@@ -97,6 +104,7 @@ class CrewAttendance(models.Model):
         ]
         indexes = [
             models.Index(fields=["workplace", "work_date"]),
+            models.Index(fields=["worker", "work_date"]),
         ]
 
     def __str__(self):

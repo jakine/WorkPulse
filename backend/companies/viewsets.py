@@ -1,4 +1,4 @@
-from django.db.models import ProtectedError
+from django.db.models import ProtectedError, RestrictedError
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -29,7 +29,7 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             return super().destroy(request, *args, **kwargs)
-        except ProtectedError:
+        except (ProtectedError, RestrictedError):
             return Response(
                 {"detail": "This record is used by other data and cannot be deleted."},
                 status=400,

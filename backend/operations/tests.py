@@ -709,7 +709,9 @@ class ProgressTests(TestCase):
                 )
                 if day >= date(2026, 6, 8):
                     for worker in crew:
-                        CrewAttendance.objects.create(workplace=self.project, team=self.team, worker=worker, work_date=day)
+                        CrewAttendance.objects.create(
+                            workplace=self.project, team=self.team, worker=worker, work_date=day, hours=Decimal("8")
+                        )
             day += timedelta(days=1)
         todo = TaskStatus.objects.get(company=self.company, name="To do")
         task = create_task(self.company, self.project, self.owner, title="Plaster stair core", status=todo, work_type=plaster)

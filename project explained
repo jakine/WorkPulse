@@ -4,14 +4,26 @@ The product idea is: **one site (a project) can be run two ways at once** — a 
 
 Phase 1 (branch `phase1-site-ops`) grew that into a site-operations core: who was on site each day, a daily log that a manager approves and locks, progress with forecasts and team performance, stock tied to the work it was used for, and photo/PDF uploads.
 
+People & pay (branch `people-and-pay`) adds how workers are managed:
+- schedules, as hours per weekday with no clock-in/out
+- holidays and days off, with approvals and yearly balances
+- hours per worker per day, on the crew they already record
+- a timesheet that managers approve per pay cycle
+- pay, by day rate or fixed weekly/monthly amount, that only the owner sees
+
 ---
 
 ## What it is, in one picture
 
 ```text
 Company (River Co, own time zone)
-  ├── People: teams, workers, optional leads
-  │     └── Team membership history (who was in which team, when)
+  ├── People: teams, workers (hire and leaving dates), optional leads
+  │     ├── Team membership history (who was in which team, when)
+  │     ├── Schedules (hours per weekday, dated versions) + holidays
+  │     ├── Days off (vacation, sick, unpaid…) with approvals and balances
+  │     ├── Other work (yard, office, travel) for days off any project
+  │     └── Pay groups (weekly / two weeks / monthly) and their approved periods
+  ├── Pay (owner only): rates, bonuses and deductions, payments, approved pay lines
   ├── Catalogs: work kinds, measures (m²/m³), work types, statuses, phases, duration units
   │     └── Material norms per work type (1.4 kg adhesive per m² of facade)
   ├── Projects (sites / workplaces)
@@ -34,9 +46,16 @@ A **report** is the core fact: *this team, on this project, on this date, on thi
 | Fact | Table | Numbers built from it |
 |------|-------|-----------------------|
 | Work done | `SiteReport` | Progress, remaining, weekly output, forecast finish |
-| Crew on site | `CrewAttendance` | Worker-days, output per worker-day |
+| Crew on site, and for how long | `CrewAttendance` (with `hours`) | Worker-days, output per worker-day, timesheet hours |
+| Work away from projects | `OtherWork` | Timesheet hours |
+| Day off | `Leave` | Days off, vacation balances, unpaid days |
+| Expected hours | `WorkScheduleVersion`, `ScheduleAssignment`, `Holiday` | Expected hours, missing days, extra hours |
 | Material moved or used | `StockMovement` | Stock on hand, use per work type, expected vs actual |
-| Day signed off | `DailyLog` | Which days are locked |
+| Day signed off | `DailyLog` | Which project days are locked |
+| Hours signed off | `TimesheetPeriod` | Which worker-days are locked |
+| Money | `PayRate`, `PayAdjustment`, `Payment` | Pay, owed balances |
+
+The one stored calculated number is the **`PayLine`**: what a worker was paid for a period, frozen when the owner approves pay so later changes to rates or settings can't rewrite it.
 
 ---
 
@@ -46,9 +65,11 @@ There are three roles on a **membership** (user ↔ company):
 
 | Role | Can |
 |------|-----|
-| **Owner** | Everything, including inviting people |
-| **Manager** | Everything except invites. Only managers approve/reopen days, edit the Planning board, set material norms and stock levels, and send or reject material requests. |
-| **Team lead** | Read projects their teams are on; fill reports and sheet cells for their teams; record crew attendance, issues, notes and photos on those days; record material used on their sites; request material; move/comment on tasks assigned to their teams |
+| **Owner** | Everything, including inviting people. **The only role that sees pay.** |
+| **Manager** | Everything except invites and pay. Managers approve or reopen days, edit the Planning board, set material norms and stock levels, and send or reject material requests. They also set up schedules, holidays and pay groups, enter hours in the timesheet, approve days off, and approve each pay group's hours. |
+| **Team lead** | Read projects their teams are on; fill reports and sheet cells for their teams; record crew attendance (with hours), issues, notes and photos on those days; record material used on their sites; request material; move/comment on tasks assigned to their teams. They can ask for days off for their own team and read their team's timesheet. |
+
+Pay is behind its own permission, `CanSeePay` in `companies/permissions.py`, which allows the owner only. It never appears in shared serializers or the activity feed. Invites can only create managers and leads, so each company has one owner.
 
 The active company lives in the **session** (`company_id`). Almost every API call does:
 
@@ -101,6 +122,18 @@ The project Overview shows, per scope: % done, weekly output, output per worker-
 **8. Stock**
 Depot receives material. Transfers go to a site. Consume/adjust are append-only movements. A **consume** on a site can name the work type it was used for. Lots can expire; the dashboard highlights that. A team lead can **request** material for a project; a manager sends all or part of it, and each sending is an ordinary depot → site transfer.
 
+**9. Hours and days off**
+- Ticking the crew in the Daily log records hours too, pre-filled from each worker's schedule (8 h on a normal day).
+- Managers fix or add hours in the **Timesheet** (`/timesheets`): workers × days, with typing in a cell, a day panel for several projects or other work, and "fill week from schedule".
+- Days off are asked for by leads and approved by managers (`/days-off`); vacation counts against a yearly allowance.
+
+**10. Close the period, then pay**
+1. At the end of each pay group's cycle (a week, two weeks or a month), a manager **approves the hours**. Waiting day-off requests block this; missing days only warn.
+2. The approval locks every hour, day off, schedule and holiday inside that period for that group's workers.
+3. The owner then **approves pay** (`/pay`), which freezes one `PayLine` per worker. Approving pay needs a rate for everyone who worked.
+4. Advances can be recorded on any day and come off what is owed. "Mark paid" records the wages, and the payslip prints.
+5. Hours can't be reopened until the owner reopens that pay.
+
 ---
 
 ## How the pieces talk at runtime
@@ -138,7 +171,7 @@ Theme is local: `data-theme` on `<html>`, CSS variables, `workpulse-theme` in `l
 User → Membership(role) → Company. Session stores which company is active. `Company.timezone` (default `UTC`) and `company.today()` decide what "today" means.
 
 **People** (`workforce`)
-`Team` (number, worker count, lead note, optional `lead_user`). `Worker` with type, optional team. Crew on a report is always a **team**, not an individual.
+`Team` (number, worker count, lead note, optional `lead_user`). `Worker` with type, optional team, `hired_on` / `left_on` and an optional yearly `leave_allowance`. Crew on a report is always a **team**, not an individual. Employment dates, not `status`, decide who can have hours on a day, so a past crew that includes someone who has left can still be corrected.
 `TeamMembership` (worker, team, start_date, end_date) is the history. At most one open stretch per worker (database constraint). `move_worker(worker, team, on_date)` closes the old stretch the day before and opens a new one. `Worker.team` stays as the current team, so older screens and APIs keep working. A team's size shows active members, with `worker_count` as the fallback for teams with no registered workers.
 
 **Catalogs** (`operations` + `work`)
@@ -159,8 +192,33 @@ Still named “workplace” in the database; the UI says **project**. Routes exi
 **Daily log** (`sitelog`, new app)
 - `DailyLog` — one per project + date: status `open` / `approved`, weather, notes, approved_by/at. Created on first write to that day.
 - `DailyLogIssue` — kind, description, hours lost, resolved.
-- `CrewAttendance` — worker + project + date + team; unique per worker per project day. The team must be placed on the project that day, workers must be active, and a worker can be on only one team's crew that day.
-- `ensure_day_open(workplace, date)` is the single lock check. Every write path for a project day calls it.
+- `CrewAttendance` — worker + project + date + team + **hours**; unique per worker per project day.
+  - The team must be placed on the project that day.
+  - Newly added workers must be employed that day.
+  - A worker can be on only one team's crew at that project that day, at most 24 h across projects and other work, and never in the future.
+  - Worker and team FKs are `RESTRICT`, so deleting a worker or team with recorded crew is refused, and deleting a project with crew hours is refused in its view.
+- `set_attendance` is the one write path for crew. The Daily log and the timesheet (`set_worker_hours`, `fill_from_schedule`) all go through it.
+- `ensure_day_open(workplace, date)` is the project-day lock. Every write path for a project day calls it.
+
+**Time** (`timesheets`)
+- `WorkSchedule` + `WorkScheduleVersion`: hours per weekday from a date on, plus `day_hours` (a full day).
+  - Changing hours adds a version, so earlier days keep their hours.
+  - `ScheduleAssignment` puts a worker (or, with no worker, everyone) on a schedule for a stretch of time.
+- `Holiday`: company calendar.
+- `LeaveType` (catalog with `paid` and `uses_allowance`, which are fixed once used) and `Leave` (a day off from–to, half days, requested / approved / rejected / cancelled).
+- `OtherWork`: hours away from any project (yard, office, travel, training).
+- `PayGroup` (cycle), `PayGroupAssignment` (who is in which group, dated) and `TimesheetPeriod` (a group's cycle, approved or open).
+- `schedule.py` (`WorkCalendar`): scheduled hours (raw schedule), expected hours (minus holidays and days outside employment) and norm (a full day).
+- `sheet.py` (`build_timesheet`): every worker × day, from about ten bulk queries.
+- `locks.py`: `ensure_worker_open` / `ensure_company_open`, the period lock. Writes that can change past hours, days off or expected hours call it.
+
+**Pay** (`payroll`, owner only)
+- `PaySettings`: currency, extra-hours multiplier (empty means not paid), and whether day-rate workers are paid for holidays.
+- `PayRate`: day, week, month or "not paid here", from a start date.
+- `PayAdjustment`: a bonus or deduction. It is attached to the next pay approved after its date.
+- `Payment`: an advance or wages, on any day.
+- `PayRun` (one per approved period) and `PayLine` (the frozen amounts).
+- Owed = approved nets − payments.
 
 **Work** (`work.Task`)
 Task belongs to company + project; optional team, work type, phase; status required. Comments and `ActivityEvent` (`core`) record created/moved/commented, and now day approved/reopened.
@@ -212,6 +270,29 @@ Endpoint: `GET /api/projects/{id}/materials/`. Shown on the project Stock tab.
 **Missing reports** (`sitelog/services.py`)
 `GET /api/daily-logs/missing/?date=` lists teams placed on an active project that day with no report from that team. Shown on the Home page.
 
+**Timesheet** (`timesheets/sheet.py`)
+
+- expected hours = the schedule's hours that weekday, 0 on holidays and outside employment
+- work value of a day = 0 with no hours, ½ up to half a full day, 1 above that. It uses the day's total across projects and other work, so two projects in one day count once.
+- day off used = min(day-off value, 1 − work value), so working on a day off is never counted twice; the day is flagged instead
+- extra hours = hours above expected (after a half day off, above half), day by day
+- missing = a past scheduled day with no hours and no day off
+- vacation balance = allowance − approved vacation days (days split at New Year)
+
+**Pay** (`payroll/calc.py`, pure functions over the timesheet rows)
+
+- **Day rate:**
+  - each worked day × rate (a half day earns half)
+  - paid days off × rate
+  - holidays on scheduled weekdays × rate, if the company pays them and the day isn't inside an unpaid day off
+  - extra hours = hours above a full day × rate ÷ full day × multiplier
+- **Fixed weekly / monthly:** for each week or month, amount × scheduled days earned ÷ all scheduled days in that whole week or month (holidays included).
+  - Unpaid days off, and holidays inside them, come off.
+  - Scheduled days with nothing recorded are still paid, and shown.
+  - Extra hours = hours above the schedule (every hour on an unscheduled day) × amount ÷ scheduled hours that week or month × multiplier.
+  - A hire on the 15th earns about half a month.
+- Amounts keep full precision and are rounded to cents once per component. Gross = base + extra + days off + holidays + bonuses; net = gross − deductions; to pay = owed before + net.
+
 ---
 
 ## How code is organized
@@ -224,12 +305,20 @@ workpulse/
   backend/          Django project
     config/         settings, urls, pagination
     accounts/       login, register, session, /me
-    companies/      Company (+ timezone), Membership, roles, seed_demo
-    workforce/      Team, Worker, TeamMembership, move_worker, active_on
+    companies/      Company (+ timezone, days off per year), Membership, roles, CanSeePay, seed_demo
+    workforce/      Team, Worker (+ employment dates), TeamMembership, move_worker, active_on
     operations/     projects, catalogs, reports, sheet, placements
       progress.py   pace, forecasts, team performance, portfolio
     work/           tasks, board statuses/phases
-    sitelog/        DailyLog, issues, crew attendance, day lock
+    sitelog/        DailyLog, issues, crew attendance (+ hours), day lock, set_attendance
+    timesheets/     schedules, holidays, days off, other work, pay groups, periods
+      schedule.py   WorkCalendar: scheduled / expected hours, full day
+      leave.py      day-off requests, decisions, balances
+      periods.py    pay group cycles, approve / reopen hours
+      locks.py      the period lock
+      sheet.py      the timesheet: worker × day, totals, weeks
+    payroll/        pay settings, rates, bonuses/deductions, payments, pay runs, payslips, CSV
+      calc.py       the pay rules
     inventory/      stock, norms, stock levels, material requests
       usage.py      expected vs actual material, shortages
     core/           activity feed, attachments
@@ -258,7 +347,12 @@ Business logic stays in **services**, not in the view. Example: filling a report
 ### Frontend pattern
 
 - **Pages** pick data and layout (`ProjectPage` has tabs: Overview, Board, Sheet, Timeline, Teams, Daily log, Stock).
-- **New pages:** `PlanningPage` (`/planning`), `TeamPage` (`/teams/:id`), `WorkerPage` (`/workers/:id`).
+- **New pages:** `PlanningPage` (`/planning`), `TeamPage` (`/teams/:id`), `WorkerPage` (`/workers/:id`, tabs Overview · Time · Days off · Pay).
+- **People & pay pages:**
+  - `TimesheetsPage` (`/timesheets`), with the `TimesheetDayPanel` drawer
+  - `DaysOffPage` (`/days-off`)
+  - `WorkTimePage` (`/settings/work-time`: schedules, holidays, pay groups, kinds of day off)
+  - `PayPage` (`/pay`) and `PayslipPage` (`/pay/lines/:id`), both owner only
 - **Components** own a feature: `WorkSheet`, `DailyReports` + `ReportCalendar`, `DayLog`, `TaskBoard`, `TaskTimeline`, `ProjectProgress`, `SiteMaterials`, `MaterialUseForm`, `MaterialNorms`, `StockLevels`, `MaterialRequestsQueue`, `AttachmentGrid`.
 - **Charts** are small inline-SVG components in `charts.js`; no chart library.
 - **`ui.js`** is shared primitives (page header, fields, tabs) using CSS variables.
@@ -295,18 +389,29 @@ Tasks are optional on a report. The board is for organizing work; the sheet/dail
 3. **Services over fat views** — uniqueness, remaining, sheet upsert, day lock, worker moves can be tested without the browser.
 4. **PROTECT on catalogs** — you cannot delete `m²` while plaster scopes exist; the API returns a clear 400.
 5. **Subquery sums** — progress stays correct as reports grow, and is annotated once per list instead of once per scope.
-6. **One lock, one date helper** — `ensure_day_open` and `active_on` are the only places those rules live.
-7. **Derived numbers are not stored** — forecasts, worker-day output and material variance are recomputed from facts, so they can never drift from them.
-8. **Migrations per slice** — operations 0008–0014, work 0001–0005, and for Phase 1: companies 0003 (timezone), core 0002 (attachments), workforce 0006 (memberships, with a data migration for existing workers), sitelog 0001, inventory 0005 (site materials).
-9. **Tests next to apps** — companies, workforce, operations, work, inventory, sitelog, core; currently **75** backend tests covering leads, tenancy for every new model, uniqueness, sheet columns, the day lock, placements, forecasts, material requests, uploads.
-10. **UI tokens** — colors/spacing in CSS variables, so dark/light is not a second copy of every page.
+6. **Each lock and date helper lives in one place** — `ensure_day_open` for project days, `ensure_worker_open` / `ensure_company_open` (`timesheets/locks.py`) for approved periods, and `active_on` for "covers this date".
+7. **Derived numbers are not stored** — forecasts, worker-day output, material variance, expected hours, balances and draft pay are recomputed from facts, so they can never drift. The one exception is `PayLine`, frozen on purpose when pay is approved.
+8. **Deletes never lose hours or pay** — worker and team FKs on attendance and every People & pay table are `RESTRICT`; `CompanyScopedViewSet` turns that into a 400 ("mark inactive instead").
+9. **Migrations per slice** — operations 0008–0014, work 0001–0005, and for Phase 1: companies 0003 (timezone), core 0002 (attachments), workforce 0006 (memberships, with a data migration for existing workers), sitelog 0001, inventory 0005 (site materials). For People & pay:
+   - companies 0004 (days off per year)
+   - workforce 0007 (employment dates)
+   - sitelog 0002 (hours; existing rows got 8 h)
+   - timesheets 0001–0006, with data migrations giving every company a default schedule, kinds of day off and a pay group
+   - payroll 0001
+10. **Tests next to apps** — companies, workforce, operations, work, inventory, sitelog, core, timesheets, payroll; currently **134** backend tests. They cover:
+    - leads, and tenancy for every new model
+    - uniqueness, sheet columns, the day lock, placements, forecasts, material requests, uploads
+    - schedules, days off, hours, the period lock, pay rules, and the owner-only pay wall
+11. **UI tokens** — colors/spacing in CSS variables, so dark/light is not a second copy of every page.
 
 **Honest limits (how “it is” today)**
 
 - Still a **dev stack**: `DEBUG=True`, committed secret key, default DB password, Django runserver + CRA. Fine for this repo, not production.
 - DB still says `Workplace`; UI says Project. That split is consistent but you must remember both names.
 - Frontend is CRA function components with `fetch`, not a typed API client. Pages can get large (`ProjectPage`, `WorkTypesPage`, `PlanningPage`).
-- Working days are Monday–Friday for forecasts; there is no holiday calendar yet.
+- Forecasts still count Monday–Friday as working days; they don't use the company schedules and holidays yet.
+- Pay is gross: no income tax or social contributions. The CSV goes to the accountant.
+- Workers have no logins of their own, and sick notes can't be uploaded yet (attachments without a project are visible to every lead).
 - The company overview (`/api/progress/`) computes each project in turn. Fine at demo scale, slow for hundreds of active projects.
 - Uploaded files live on a local Docker volume, not object storage.
 - Unique names are case-sensitive in the DB (`Foo` vs `foo`).
@@ -320,7 +425,12 @@ To add a feature, the usual path is:
 
 1. Company-scoped model + unique constraint + `PROTECT` if it is a catalog.
 2. Migration.
-3. `prepare_*` / `create_*` in `services.py`. If it writes to a project day, call `ensure_day_open`. If it has a date range, use `active_on`. If it needs "today", use `company.today()`.
+3. `prepare_*` / `create_*` in `services.py`.
+   - If it writes to a project day, call `ensure_day_open`.
+   - If it can change past hours, days off or expected hours, call `ensure_worker_open` / `ensure_company_open`.
+   - If it has a date range, use `active_on`.
+   - If it needs "today", use `company.today()`.
+   - If it touches money, put it behind `CanSeePay`, and keep it out of shared serializers and the activity feed.
 4. Serializer + ViewSet (`lead_actions` if leads should write).
 5. Test with `auth_client`, including a second company that must not see it.
 6. Small React page or tab that uses `api` / `apiList` (`apiUpload` for files).

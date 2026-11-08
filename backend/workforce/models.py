@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
@@ -77,12 +79,35 @@ class Worker(models.Model):
         on_delete=models.SET_NULL,
         related_name="members",
     )
+    hired_on = models.DateField(null=True, blank=True)
+    left_on = models.DateField(null=True, blank=True)
+    leave_allowance = models.DecimalField(
+        max_digits=4,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+    )
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(hired_on__isnull=True)
+                    | models.Q(left_on__isnull=True)
+                    | models.Q(left_on__gte=models.F("hired_on"))
+                ),
+                name="worker_employment_dates_in_order",
+            ),
+        ]
 
     def __str__(self):
         return self.name
+
+    def employed_on(self, day):
+        """hired_on is empty when the worker started before records were kept; left_on is the last working day."""
+        return (self.hired_on is None or self.hired_on <= day) and (self.left_on is None or day <= self.left_on)
 
 
 class TeamMembership(models.Model):

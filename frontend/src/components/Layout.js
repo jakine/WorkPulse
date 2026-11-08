@@ -5,7 +5,7 @@ import { useTheme } from "../context/ThemeContext";
 
 const ROLE_LABELS = { owner: "Owner", manager: "Manager", team_lead: "Team lead" };
 
-function navGroups(canManage) {
+function navGroups(canManage, isOwner) {
   return [
     {
       label: "Work",
@@ -23,6 +23,9 @@ function navGroups(canManage) {
       links: [
         { to: "/teams", label: "Teams" },
         { to: "/workers", label: "Workers" },
+        { to: "/timesheets", label: "Timesheet" },
+        { to: "/days-off", label: "Days off" },
+        ...(isOwner ? [{ to: "/pay", label: "Pay" }] : []),
       ],
     },
     {
@@ -36,7 +39,12 @@ function navGroups(canManage) {
       label: "Settings",
       links: [
         { to: "/company", label: "Company" },
-        ...(canManage ? [{ to: "/settings/workflow", label: "Workflow" }] : []),
+        ...(canManage
+          ? [
+              { to: "/settings/workflow", label: "Workflow" },
+              { to: "/settings/work-time", label: "Work time" },
+            ]
+          : []),
       ],
     },
   ];
@@ -69,7 +77,7 @@ function ThemeToggle() {
 
 function Layout() {
   const { user, setUser } = useAuth();
-  const { canManage } = useRole();
+  const { canManage, isOwner } = useRole();
   const navigate = useNavigate();
   const company = user?.active_company;
   const location = useLocation();
@@ -81,7 +89,7 @@ function Layout() {
     navigate("/login");
   }
 
-  const groups = company ? navGroups(canManage) : [navGroups(false)[3]];
+  const groups = company ? navGroups(canManage, isOwner) : [navGroups(false, false)[3]];
 
   return (
     <div className="app-shell">

@@ -56,6 +56,7 @@ function PlanningPage() {
   const [teams, setTeams] = useState([]);
   const [projects, setProjects] = useState([]);
   const [placements, setPlacements] = useState([]);
+  const [offByTeam, setOffByTeam] = useState({});
   const [form, setForm] = useState({ ...emptyForm, start_date: today });
   const [editing, setEditing] = useState(null);
   const [warnings, setWarnings] = useState([]);
@@ -76,6 +77,7 @@ function PlanningPage() {
     setTeams(teamRows);
     setProjects(projectRows);
     setPlacements(placementRows);
+    setOffByTeam(await api(`/days-off/by-team/?from=${start}&to=${end}`).catch(() => ({})));
   }, [start, end]);
 
   useEffect(() => {
@@ -245,6 +247,7 @@ function PlanningPage() {
                   const weekend = date.getDay() === 0 || date.getDay() === 6;
                   const here = placements.filter((row) => row.team === team.id && covers(row, day));
                   const clash = here.length > 1;
+                  const away = offByTeam[team.id]?.[day] || 0;
                   return (
                     <td
                       key={day}
@@ -262,6 +265,23 @@ function PlanningPage() {
                       <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
                         {here.map((row, index) => renderBar(row, day, index, here.length))}
                       </div>
+                      {away > 0 && (
+                        <span
+                          title={`${away} ${away === 1 ? "person" : "people"} off`}
+                          style={{
+                            position: "absolute",
+                            right: 2,
+                            bottom: 1,
+                            zIndex: 2,
+                            fontSize: "0.6rem",
+                            fontWeight: 700,
+                            color: "var(--warn)",
+                            pointerEvents: "none",
+                          }}
+                        >
+                          {away} off
+                        </span>
+                      )}
                     </td>
                   );
                 })}
