@@ -62,24 +62,19 @@ def live_lines(group, start, end):
     return result
 
 
-def line_fields(line):
+LINE_FIELDS = (
+    "pay_type", "rate", "days", "hours", "extra_hours", "paid_off_days", "unpaid_off_days", "holidays",
+    "base", "extra_pay", "off_pay", "holiday_pay", "bonuses", "deductions", "gross", "net",
+)
+
+
+def line_values(line, before):
+    """A calculated line as PayLine fields, starting from what the worker was owed before."""
     return {
-        "pay_type": line.pay_type,
-        "rate": line.rate,
-        "days": line.days,
-        "hours": line.hours,
-        "extra_hours": line.extra_hours,
-        "paid_off_days": line.paid_off_days,
-        "unpaid_off_days": line.unpaid_off_days,
-        "holidays": line.holidays,
-        "base": line.base,
-        "extra_pay": line.extra_pay,
-        "off_pay": line.off_pay,
-        "holiday_pay": line.holiday_pay,
-        "bonuses": line.bonuses,
-        "deductions": line.deductions,
-        "gross": line.gross,
-        "net": line.net,
+        **{name: getattr(line, name) for name in LINE_FIELDS},
+        "balance_before": before,
+        "to_pay": before + line.net,
+        "breakdown": {"segments": line.segments, "warnings": line.warnings, "unrecorded": line.unrecorded},
     }
 
 
@@ -97,15 +92,7 @@ def approve_pay(group, start, end, user):
         if run.status == PayRun.Status.APPROVED:
             raise ValidationError("Pay for this period is already approved.")
         for worker, line, adjustments in lines:
-            before = balances[worker.pk]
-            saved = PayLine.objects.create(
-                pay_run=run,
-                worker=worker,
-                **line_fields(line),
-                balance_before=before,
-                to_pay=before + line.net,
-                breakdown={"segments": line.segments, "warnings": line.warnings, "unrecorded": line.unrecorded},
-            )
+            saved = PayLine.objects.create(pay_run=run, worker=worker, **line_values(line, balances[worker.pk]))
             PayAdjustment.objects.filter(pk__in=[adjustment.pk for adjustment in adjustments]).update(pay_line=saved)
         run.status = PayRun.Status.APPROVED
         run.approved_by = user

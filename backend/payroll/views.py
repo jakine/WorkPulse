@@ -29,7 +29,7 @@ from payroll.services import (
     approve_pay,
     ensure_rate_open,
     export_csv,
-    line_fields,
+    line_values,
     live_lines,
     owed,
     pay_settings,
@@ -47,6 +47,9 @@ class PayViewSet(CompanyScopedViewSet):
     def filter_worker(self, queryset):
         worker = self.request.query_params.get("worker")
         return queryset.filter(worker_id=worker) if worker else queryset
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.company, created_by=self.request.user)
 
 
 class PaySettingsView(APIView):
@@ -84,7 +87,7 @@ class PayRateViewSet(PayViewSet):
 
     def perform_create(self, serializer):
         ensure_rate_open(serializer.validated_data["worker"], serializer.validated_data["start_date"])
-        serializer.save(company=self.request.company, created_by=self.request.user)
+        super().perform_create(serializer)
 
     def perform_update(self, serializer):
         rate = serializer.instance
@@ -106,9 +109,6 @@ class PayAdjustmentViewSet(PayViewSet):
         if self.request.query_params.get("open") == "1":
             queryset = queryset.filter(pay_line__isnull=True)
         return queryset
-
-    def perform_create(self, serializer):
-        serializer.save(company=self.request.company, created_by=self.request.user)
 
     def _check_open(self, adjustment):
         if adjustment.pay_line_id is not None:
@@ -136,9 +136,6 @@ class PaymentViewSet(PayViewSet):
             queryset = queryset.filter(paid_on__lte=params["to"])
         return queryset
 
-    def perform_create(self, serializer):
-        serializer.save(company=self.request.company, created_by=self.request.user)
-
 
 def money_or_none(value):
     return str(value) if value is not None else None
@@ -163,24 +160,31 @@ class PayRunViewSet(viewsets.GenericViewSet):
         query.is_valid(raise_exception=True)
         group = self._group(request, query.validated_data["pay_group"])
         today = request.company.today()
+        saved = {period.start_date: period for period in group.periods.select_related("pay_run")}
+        totals = {
+            period_id: (net, to_pay)
+            for period_id, net, to_pay in PayLine.objects.filter(
+                pay_run__period__pay_group=group, pay_run__status=PayRun.Status.APPROVED
+            )
+            .values_list("pay_run__period_id")
+            .annotate(Sum("net"), Sum("to_pay"))
+        }
         start, end = period_bounds(group, today)
         rows = []
         for _ in range(8):
-            saved = TimesheetPeriod.objects.filter(pay_group=group, start_date=start).first()
-            run = PayRun.objects.filter(period=saved).first() if saved else None
-            totals = {}
-            if run is not None and run.status == PayRun.Status.APPROVED:
-                totals = run.lines.aggregate(net=Sum("net"), to_pay=Sum("to_pay"))
+            period = saved.get(start)
+            run = getattr(period, "pay_run", None)
+            net, to_pay = totals.get(getattr(period, "pk", None), (None, None))
             rows.append(
                 {
                     "start": str(start),
                     "end": str(end),
                     "label": period_label(start, end),
                     "over": end < today,
-                    "hours_status": saved.status if saved else TimesheetPeriod.Status.OPEN,
+                    "hours_status": period.status if period else TimesheetPeriod.Status.OPEN,
                     "pay_status": run.status if run else None,
-                    "net": money_or_none(totals.get("net")),
-                    "to_pay": money_or_none(totals.get("to_pay")),
+                    "net": money_or_none(net),
+                    "to_pay": money_or_none(to_pay),
                 }
             )
             start, end = period_bounds(group, start - timedelta(days=1))
@@ -208,11 +212,8 @@ class PayRunViewSet(viewsets.GenericViewSet):
                     "id": None,
                     "worker": worker.pk,
                     "worker_name": worker.name,
-                    **{key: str(value) for key, value in line_fields(line).items()},
-                    "balance_before": str(before[worker.pk]),
-                    "to_pay": str(before[worker.pk] + line.net),
+                    **{key: value if key == "breakdown" else str(value) for key, value in line_values(line, before[worker.pk]).items()},
                     "missing_rate": line.missing_rate,
-                    "breakdown": {"segments": line.segments, "warnings": line.warnings, "unrecorded": line.unrecorded},
                 }
                 for worker, line, _ in calculated
             ]
