@@ -479,7 +479,6 @@ class Command(BaseCommand):
                 worker.hired_on = day
                 worker.save(update_fields=["hired_on"])
 
-        create_default_schedule(company)
         six_days, created = WorkSchedule.objects.get_or_create(company=company, name="Six days")
         if created:
             WorkScheduleVersion.objects.create(
