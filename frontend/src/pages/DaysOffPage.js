@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, apiList } from "../api/client";
+import { apiList } from "../api/client";
 import { DayOffForm, DayOffList } from "../components/DaysOff";
 import { addDays, isoDate, parseDate } from "../components/ReportCalendar";
 import { ErrorText, PageHeader, companyToday, styles } from "../components/ui";
@@ -97,16 +97,6 @@ function DaysOffPage() {
     load().catch((err) => setError(err.message));
   }, [load]);
 
-  async function act(row, action) {
-    setError("");
-    try {
-      await api(`/days-off/${row.id}/${action}/`, { method: "POST" });
-      await load();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
   return (
     <div style={styles.page}>
       <PageHeader title="Days off">
@@ -116,7 +106,7 @@ function DaysOffPage() {
 
       <div style={styles.card}>
         <h2 style={{ marginTop: 0 }}>Waiting for approval</h2>
-        <DayOffList rows={waiting} canManage={canManage} userId={user?.id} onAction={act} empty="Nothing is waiting." />
+        <DayOffList rows={waiting} canManage={canManage} userId={user?.id} onChanged={load} onError={setError} empty="Nothing is waiting." />
       </div>
 
       <DayOffForm
@@ -130,7 +120,14 @@ function DaysOffPage() {
 
       <div style={styles.card}>
         <h2 style={{ marginTop: 0 }}>Upcoming and recent</h2>
-        <DayOffList rows={recent} canManage={canManage} userId={user?.id} onAction={act} empty="No days off in the last month or ahead." />
+        <DayOffList
+          rows={recent}
+          canManage={canManage}
+          userId={user?.id}
+          onChanged={load}
+          onError={setError}
+          empty="No days off in the last month or ahead."
+        />
       </div>
 
       <Balances rows={balances} year={year} onYear={setYear} />

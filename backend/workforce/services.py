@@ -13,11 +13,20 @@ def ranges_overlap(start_a, end_a, start_b, end_b):
     return start_a <= end_b and start_b <= end_a
 
 
+def week_start(day):
+    return day - timedelta(days=day.weekday())
+
+
+def overlapping(start, end, prefix=""):
+    """Q for rows with optional start_date/end_date that overlap start..end."""
+    return (Q(**{f"{prefix}start_date__isnull": True}) | Q(**{f"{prefix}start_date__lte": end})) & (
+        Q(**{f"{prefix}end_date__isnull": True}) | Q(**{f"{prefix}end_date__gte": start})
+    )
+
+
 def active_on(on_date, prefix=""):
     """Q for rows with optional start_date/end_date that cover on_date."""
-    return (Q(**{f"{prefix}start_date__isnull": True}) | Q(**{f"{prefix}start_date__lte": on_date})) & (
-        Q(**{f"{prefix}end_date__isnull": True}) | Q(**{f"{prefix}end_date__gte": on_date})
-    )
+    return overlapping(on_date, on_date, prefix)
 
 
 def team_members_on(team, on_date):

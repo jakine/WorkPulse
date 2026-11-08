@@ -171,7 +171,7 @@ def build_timesheet(company, workers, start, end, spans=None, calendar=None):
                     {"type": "other", "id": row["id"], "kind": row["kind"], "hours": row["hours"], "note": row["note"]}
                 )
             for leave in leaves[worker.pk]:
-                if leave.covers(day):
+                if covers(leave, day):
                     if leave.status == Leave.Status.APPROVED:
                         entry.leave = leave
                     else:
@@ -221,6 +221,7 @@ def weekly(days):
 
 
 def cell_json(day, today, project_names):
+    """`editable`: hours can be typed straight into the cell (not on a full day off or an unworked holiday)."""
     site = day.site_entries
     editable = (
         day.counted
@@ -229,6 +230,8 @@ def cell_json(day, today, project_names):
         and day.date <= today
         and len(site) == len(day.entries) <= 1
         and not any(entry["day_approved"] for entry in site)
+        and not (day.leave is not None and not day.leave.half_day)
+        and not (day.holiday and not day.worked)
     )
     off = None
     shown = day.leave or day.waiting
@@ -298,7 +301,6 @@ def sheet_json(company, rows, start, end, project_names):
         "days": [
             {"date": str(day), "weekday": day.weekday(), "holiday": holidays.get(day)} for day in days_between(start, end)
         ],
-        "projects": {str(key): value for key, value in project_names.items()},
         "workers": workers,
         "daily": {key: {"people": value["people"], "hours": amount(value["hours"])} for key, value in daily.items()},
     }

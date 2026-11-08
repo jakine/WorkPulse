@@ -64,6 +64,22 @@ export const styles = {
     minWidth: "9rem",
     boxShadow: "var(--shadow)",
   },
+  panel: {
+    position: "fixed",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: "min(460px, 100vw)",
+    background: "var(--surface)",
+    borderLeft: "1px solid var(--line)",
+    boxShadow: "var(--shadow)",
+    padding: "1.25rem",
+    overflowY: "auto",
+    zIndex: 20,
+    display: "grid",
+    gap: "1rem",
+    alignContent: "start",
+  },
 };
 
 export function Field({ label, children }) {

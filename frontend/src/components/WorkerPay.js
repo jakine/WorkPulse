@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, apiList } from "../api/client";
-import { METHODS, PAY_TYPES, formatMoney, payTypeLabel } from "./money";
-import { Badge, Field, formatDay, styles } from "./ui";
+import { METHODS, PAY_TYPES, formatMoney, num, payTypeLabel } from "./money";
+import { Badge, Field, formatDay, labelFor, styles } from "./ui";
 
-const num = { ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
 const small = { ...styles.input, width: "7rem", minWidth: 0 };
 
 function WorkerPay({ worker, today, onError }) {
@@ -200,7 +199,7 @@ function WorkerPay({ worker, today, onError }) {
                   <td style={styles.td}>{formatDay(row.paid_on)}</td>
                   <td style={styles.td}>{row.kind === "advance" ? "Advance" : "Wages"}</td>
                   <td style={num}>{formatMoney(row.amount, currency)}</td>
-                  <td style={styles.td}>{(METHODS.find(([key]) => key === row.method) || [null, row.method])[1]}</td>
+                  <td style={styles.td}>{labelFor(METHODS, row.method)}</td>
                   <td style={{ ...styles.td, color: "var(--muted)" }}>{row.note}</td>
                   <td style={{ ...styles.td, textAlign: "right" }}>
                     <button

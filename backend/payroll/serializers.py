@@ -1,13 +1,7 @@
 from rest_framework import serializers
 
+from companies.serializers import CompanyWorkerMixin
 from payroll.models import PayAdjustment, PayLine, PayRate, PaySettings, Payment
-
-
-class CompanyWorkerMixin:
-    def validate_worker(self, worker):
-        if worker.company_id != self.context["request"].company.id:
-            raise serializers.ValidationError("Worker must belong to this company.")
-        return worker
 
 
 class PaySettingsSerializer(serializers.ModelSerializer):
@@ -62,7 +56,6 @@ class PaymentSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
 
 class PayLineSerializer(serializers.ModelSerializer):
     worker_name = serializers.CharField(source="worker.name", read_only=True)
-    pay_type_name = serializers.CharField(source="get_pay_type_display", read_only=True)
 
     class Meta:
         model = PayLine
@@ -71,7 +64,6 @@ class PayLineSerializer(serializers.ModelSerializer):
             "worker",
             "worker_name",
             "pay_type",
-            "pay_type_name",
             "rate",
             "days",
             "hours",

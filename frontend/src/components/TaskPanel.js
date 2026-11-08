@@ -5,23 +5,6 @@ import ActivityList from "./ActivityList";
 import AttachmentGrid from "./AttachmentGrid";
 import { ErrorText, Field, PRIORITIES, PriorityBadge, WorkTypeOptions, formatWhen, styles } from "./ui";
 
-const panelStyle = {
-  position: "fixed",
-  top: 0,
-  right: 0,
-  bottom: 0,
-  width: "min(460px, 100vw)",
-  background: "var(--surface)",
-  borderLeft: "1px solid var(--line)",
-  boxShadow: "var(--shadow)",
-  padding: "1.25rem",
-  overflowY: "auto",
-  zIndex: 20,
-  display: "grid",
-  gap: "1rem",
-  alignContent: "start",
-};
-
 const wide = { ...styles.input, width: "100%", boxSizing: "border-box" };
 
 function toForm(task) {
@@ -139,7 +122,7 @@ function TaskPanel({ taskId, statuses, onClose, onChange }) {
   }
 
   return (
-    <aside style={panelStyle} aria-label="Task details">
+    <aside style={styles.panel} aria-label="Task details">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: "1rem" }}>
         <div>
           <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>

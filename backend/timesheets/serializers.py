@@ -3,7 +3,8 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from companies.permissions import is_team_lead
-from timesheets.leave import leave_days, request_leave, update_leave
+from companies.serializers import CompanyWorkerMixin, unique_name
+from timesheets.leave import leave_days, request_leave
 from timesheets.models import (
     WEEKDAYS,
     Holiday,
@@ -72,24 +73,11 @@ class WorkScheduleSerializer(serializers.ModelSerializer):
         return getattr(schedule, "worker_count", 0)
 
     def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        clash = WorkSchedule.objects.filter(company=self.context["request"].company, name__iexact=name)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        if clash.exists():
-            raise serializers.ValidationError("A schedule with this name already exists.")
-        return name
+        return unique_name(WorkSchedule, self.context["request"].company, name, self.instance, "schedule")
 
     def create(self, validated_data):
         hours = {name: validated_data.pop(name) for name in WEEKDAYS}
         return create_schedule(validated_data["company"], validated_data["name"], hours, validated_data["day_hours"])
-
-    def update(self, instance, validated_data):
-        instance.name = validated_data.get("name", instance.name)
-        instance.save(update_fields=["name"])
-        return instance
 
 
 class ApplyScheduleSerializer(serializers.Serializer):
@@ -120,17 +108,8 @@ class HolidaySerializer(serializers.ModelSerializer):
         model = Holiday
         fields = ["id", "date", "name"]
 
-    def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        return name
-
     def validate_date(self, day):
-        clash = Holiday.objects.filter(company=self.context["request"].company, date=day)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        if clash.exists():
+        if Holiday.objects.filter(company=self.context["request"].company, date=day).exists():
             raise serializers.ValidationError("There is already a holiday on that day.")
         return day
 
@@ -145,25 +124,15 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         model = LeaveType
         fields = ["id", "name", "code", "paid", "uses_allowance", "position", "archived"]
 
-    def _clash(self, **lookup):
-        clash = LeaveType.objects.filter(company=self.context["request"].company, **lookup)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        return clash.exists()
-
     def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        if self._clash(name__iexact=name):
-            raise serializers.ValidationError("A type with this name already exists.")
-        return name
+        return unique_name(LeaveType, self.context["request"].company, name, self.instance, "type")
 
     def validate_code(self, code):
-        code = code.strip().upper()
-        if not code:
-            raise serializers.ValidationError("Enter a one or two letter code.")
-        if self._clash(code=code):
+        code = code.upper()
+        clash = LeaveType.objects.filter(company=self.context["request"].company, code=code)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
             raise serializers.ValidationError("Another type uses this code.")
         return code
 
@@ -177,14 +146,11 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class LeaveSerializer(serializers.ModelSerializer):
+class LeaveSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
     worker_name = serializers.CharField(source="worker.name", read_only=True)
     type_name = serializers.CharField(source="leave_type.name", read_only=True)
     type_code = serializers.CharField(source="leave_type.code", read_only=True)
     paid = serializers.BooleanField(source="leave_type.paid", read_only=True)
-    uses_allowance = serializers.BooleanField(source="leave_type.uses_allowance", read_only=True)
-    requested_by_email = serializers.EmailField(source="requested_by.email", read_only=True, default="")
-    decided_by_email = serializers.EmailField(source="decided_by.email", read_only=True, default="")
     days = serializers.SerializerMethodField()
 
     class Meta:
@@ -197,25 +163,15 @@ class LeaveSerializer(serializers.ModelSerializer):
             "type_name",
             "type_code",
             "paid",
-            "uses_allowance",
             "start_date",
             "end_date",
             "half_day",
             "status",
             "note",
             "requested_by",
-            "requested_by_email",
-            "decided_by_email",
-            "decided_at",
-            "created_at",
             "days",
         ]
-        read_only_fields = ["status", "requested_by", "decided_at", "created_at"]
-
-    def validate_worker(self, worker):
-        if worker.company_id != self.context["request"].company.id:
-            raise serializers.ValidationError("Worker must belong to this company.")
-        return worker
+        read_only_fields = ["status", "requested_by"]
 
     def validate_leave_type(self, leave_type):
         if leave_type.company_id != self.context["request"].company.id:
@@ -249,10 +205,6 @@ class LeaveSerializer(serializers.ModelSerializer):
             approve=not is_team_lead(request),
         )
 
-    def update(self, instance, validated_data):
-        validated_data.pop("worker", None)
-        return update_leave(instance, validated_data)
-
 
 class LeavePreviewSerializer(serializers.Serializer):
     worker = serializers.IntegerField(min_value=1)
@@ -264,29 +216,18 @@ class LeavePreviewSerializer(serializers.Serializer):
 
 class YearSerializer(serializers.Serializer):
     year = serializers.IntegerField(min_value=2000, max_value=2100, required=False)
-    team = serializers.IntegerField(min_value=1, required=False)
+    worker = serializers.IntegerField(min_value=1, required=False)
 
 
-class OtherWorkSerializer(serializers.ModelSerializer):
+class OtherWorkSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
     worker_name = serializers.CharField(source="worker.name", read_only=True)
 
     class Meta:
         model = OtherWork
         fields = ["id", "worker", "worker_name", "work_date", "hours", "kind", "note"]
 
-    def validate_worker(self, worker):
-        if worker.company_id != self.context["request"].company.id:
-            raise serializers.ValidationError("Worker must belong to this company.")
-        return worker
-
     def create(self, validated_data):
         return save_other_work(OtherWork(**validated_data), user=self.context["request"].user)
-
-    def update(self, instance, validated_data):
-        validated_data.pop("worker", None)
-        for field, value in validated_data.items():
-            setattr(instance, field, value)
-        return save_other_work(instance)
 
 
 class PayGroupSerializer(serializers.ModelSerializer):
@@ -301,15 +242,7 @@ class PayGroupSerializer(serializers.ModelSerializer):
         return getattr(group, "member_count", 0)
 
     def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        clash = PayGroup.objects.filter(company=self.context["request"].company, name__iexact=name)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        if clash.exists():
-            raise serializers.ValidationError("A pay group with this name already exists.")
-        return name
+        return unique_name(PayGroup, self.context["request"].company, name, self.instance, "pay group")
 
     def validate(self, attrs):
         cycle = attrs.get("cycle", getattr(self.instance, "cycle", PayGroup.Cycle.MONTHLY))

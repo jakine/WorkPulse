@@ -208,7 +208,7 @@ class PayRunTests(PayTestCase):
         self.assertEqual((next_line["bonuses"], next_line["net"]), ("50.00", "110.00"))
         late.refresh_from_db()
         self.assertIsNotNone(late.pay_line_id)
-        self.assertEqual(self.client.patch(f"/api/pay-adjustments/{late.pk}/", {"amount": "60"}, format="json").status_code, 400)
+        self.assertEqual(self.client.patch(f"/api/pay-adjustments/{late.pk}/", {"amount": "60"}, format="json").status_code, 405)
 
     def test_advances_bigger_than_pay_carry_over(self):
         self.work(self.arben, date(2026, 6, 8))

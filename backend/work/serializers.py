@@ -3,19 +3,10 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from companies.models import Membership
+from companies.serializers import unique_name
 from operations.models import WorkplaceTeam
 from operations.services import measure_symbol_for
 from work.models import Task, TaskCategory, TaskComment, TaskPhase, TaskStatus
-
-
-def _unique_name(model, company, name, instance=None, label="record"):
-    name = name.strip()
-    existing = model.objects.filter(company=company, name__iexact=name)
-    if instance is not None:
-        existing = existing.exclude(pk=instance.pk)
-    if existing.exists():
-        raise serializers.ValidationError(f"A {label} with that name already exists.")
-    return name
 
 
 class TaskCategorySerializer(serializers.ModelSerializer):
@@ -24,7 +15,7 @@ class TaskCategorySerializer(serializers.ModelSerializer):
         fields = ["id", "name", "color", "position"]
 
     def validate_name(self, name):
-        return _unique_name(TaskCategory, self.context["request"].company, name, self.instance, "category")
+        return unique_name(TaskCategory, self.context["request"].company, name, self.instance, "category")
 
     def validate_color(self, color):
         color = color.strip()
@@ -43,7 +34,7 @@ class TaskPhaseSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "position"]
 
     def validate_name(self, name):
-        return _unique_name(TaskPhase, self.context["request"].company, name, self.instance, "phase")
+        return unique_name(TaskPhase, self.context["request"].company, name, self.instance, "phase")
 
 
 class TaskStatusSerializer(serializers.ModelSerializer):
@@ -55,7 +46,7 @@ class TaskStatusSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "category", "category_name", "category_color", "position"]
 
     def validate_name(self, name):
-        return _unique_name(TaskStatus, self.context["request"].company, name, self.instance, "status")
+        return unique_name(TaskStatus, self.context["request"].company, name, self.instance, "status")
 
     def validate_category(self, category):
         if category.company_id != self.context["request"].company.id:

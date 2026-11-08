@@ -135,7 +135,7 @@ class ScheduleApiTests(TestCase):
     def test_the_company_default_row_cannot_be_deleted(self):
         row = ScheduleAssignment.objects.get(company=self.company, worker__isnull=True)
         response = self.client.delete(f"/api/schedule-assignments/{row.pk}/")
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 405)
 
     def test_holidays_by_year_and_copied_to_the_next(self):
         for day, name in (("2026-01-01", "New Year"), ("2026-12-25", "Christmas"), ("2025-12-25", "Christmas")):

@@ -114,23 +114,6 @@ def request_leave(*, company, worker, leave_type, start_date, end_date, half_day
     return leave
 
 
-def update_leave(leave, changes):
-    if leave.status not in ACTIVE:
-        raise ValidationError("Only waiting or approved days off can be changed.")
-    if "leave_type" in changes and changes["leave_type"].archived and changes["leave_type"].pk != leave.leave_type_id:
-        raise ValidationError({"leave_type": "That type is no longer used."})
-    if leave.status == Leave.Status.APPROVED:
-        ensure_worker_open(leave.worker, leave.start_date, leave.end_date)
-    for field, value in changes.items():
-        setattr(leave, field, value.strip() if field == "note" else value)
-    with transaction.atomic():
-        Worker.objects.select_for_update().get(pk=leave.worker_id)
-        ensure_worker_open(leave.worker, leave.start_date, leave.end_date)
-        check_leave(leave)
-        leave.save()
-    return leave
-
-
 def decide_leave(leave, user, approve):
     if leave.status != Leave.Status.REQUESTED:
         raise ValidationError("This day off has already been decided.")

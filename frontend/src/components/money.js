@@ -1,3 +1,8 @@
+import { labelFor, styles } from "./ui";
+
+/** A right-aligned table cell for amounts. */
+export const num = { ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
+
 export function formatMoney(value, currency = "EUR") {
   const number = Number(value || 0);
   try {
@@ -15,7 +20,7 @@ export const PAY_TYPES = [
 ];
 
 export function payTypeLabel(value) {
-  return (PAY_TYPES.find(([key]) => key === value) || [value, value || "No rate"])[1];
+  return labelFor(PAY_TYPES, value) || "No rate";
 }
 
 export const METHODS = [

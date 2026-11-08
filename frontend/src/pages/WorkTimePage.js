@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { api, apiList } from "../api/client";
-import { Badge, ErrorText, Field, PageHeader, companyToday, formatDay, styles } from "../components/ui";
-import { WEEKDAYS, hoursLabel, versionOn } from "../components/hours";
+import { Badge, ErrorText, Field, PageHeader, companyToday, formatDay, labelFor, styles } from "../components/ui";
+import { CYCLES, WEEKDAYS, hoursLabel, versionOn } from "../components/hours";
 import { useAuth, useRole } from "../context/AuthContext";
 
 const emptyHours = { mon: "8", tue: "8", wed: "8", thu: "8", fri: "8", sat: "0", sun: "0", day_hours: "8" };
@@ -181,17 +181,42 @@ function Schedules({ schedules, today, run }) {
   );
 }
 
+function toggled(ids, id) {
+  return ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
+}
+
+function TeamSelect({ teams, value, onChange }) {
+  return (
+    <Field label="Team">
+      <select style={styles.input} value={value} onChange={(e) => onChange(e.target.value)} required>
+        <option value="" disabled>
+          Choose
+        </option>
+        {teams.map((team) => (
+          <option key={team.id} value={team.id}>
+            {team.number} · {team.name}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+function WorkerChecks({ workers, chosen, onToggle }) {
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem 1.1rem", marginTop: "0.8rem" }}>
+      {workers.map((worker) => (
+        <label key={worker.id} style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+          <input type="checkbox" checked={chosen.includes(worker.id)} onChange={() => onToggle(worker.id)} />
+          {worker.name}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 function ApplySchedule({ schedules, teams, workers, today, run }) {
   const [form, setForm] = useState({ schedule: "", target: "team", team: "", worker_ids: [], start_date: today });
-
-  function toggleWorker(id) {
-    setForm((current) => ({
-      ...current,
-      worker_ids: current.worker_ids.includes(id)
-        ? current.worker_ids.filter((value) => value !== id)
-        : [...current.worker_ids, id],
-    }));
-  }
 
   async function submit(event) {
     event.preventDefault();
@@ -236,20 +261,7 @@ function ApplySchedule({ schedules, teams, workers, today, run }) {
             <option value="everyone">Everyone (company default)</option>
           </select>
         </Field>
-        {form.target === "team" && (
-          <Field label="Team">
-            <select style={styles.input} value={form.team} onChange={(e) => setForm({ ...form, team: e.target.value })} required>
-              <option value="" disabled>
-                Choose
-              </option>
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.number} · {team.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
+        {form.target === "team" && <TeamSelect teams={teams} value={form.team} onChange={(team) => setForm({ ...form, team })} />}
         <Field label="From">
           <input
             style={styles.input}
@@ -264,14 +276,11 @@ function ApplySchedule({ schedules, teams, workers, today, run }) {
         </button>
       </div>
       {form.target === "workers" && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem 1.1rem", marginTop: "0.8rem" }}>
-          {workers.map((worker) => (
-            <label key={worker.id} style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-              <input type="checkbox" checked={form.worker_ids.includes(worker.id)} onChange={() => toggleWorker(worker.id)} />
-              {worker.name}
-            </label>
-          ))}
-        </div>
+        <WorkerChecks
+          workers={workers}
+          chosen={form.worker_ids}
+          onToggle={(id) => setForm((current) => ({ ...current, worker_ids: toggled(current.worker_ids, id) }))}
+        />
       )}
     </form>
   );
@@ -355,12 +364,6 @@ function Holidays({ today, run }) {
   );
 }
 
-const CYCLES = [
-  ["weekly", "Weekly"],
-  ["two_weeks", "Every two weeks"],
-  ["monthly", "Monthly"],
-];
-
 function PayGroups({ teams, workers, today, run }) {
   const [groups, setGroups] = useState([]);
   const [form, setForm] = useState({ name: "", cycle: "weekly", anchor_date: "" });
@@ -394,13 +397,6 @@ function PayGroups({ teams, workers, today, run }) {
     if (await act(() => api(`/pay-groups/${move.group}/assign/`, { method: "POST", body }))) setMove({ ...move, worker_ids: [] });
   }
 
-  function toggleWorker(id) {
-    setMove((current) => ({
-      ...current,
-      worker_ids: current.worker_ids.includes(id) ? current.worker_ids.filter((value) => value !== id) : [...current.worker_ids, id],
-    }));
-  }
-
   return (
     <div style={styles.card}>
       <h2 style={{ marginTop: 0 }}>Pay groups</h2>
@@ -423,7 +419,7 @@ function PayGroups({ teams, workers, today, run }) {
                 <strong>{group.name}</strong> {group.is_default && <Badge>Default</Badge>}
               </td>
               <td style={styles.td}>
-                {(CYCLES.find(([key]) => key === group.cycle) || [null, group.cycle])[1]}
+                {labelFor(CYCLES, group.cycle)}
                 {group.cycle === "two_weeks" && group.anchor_date ? `, from ${formatDay(group.anchor_date)}` : ""}
               </td>
               <td style={{ ...styles.td, textAlign: "right" }}>{group.member_count}</td>
@@ -486,20 +482,7 @@ function PayGroups({ teams, workers, today, run }) {
             <option value="team">A team</option>
           </select>
         </Field>
-        {move.target === "team" && (
-          <Field label="Team">
-            <select style={styles.input} value={move.team} onChange={(e) => setMove({ ...move, team: e.target.value })} required>
-              <option value="" disabled>
-                Choose
-              </option>
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.number} · {team.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
+        {move.target === "team" && <TeamSelect teams={teams} value={move.team} onChange={(team) => setMove({ ...move, team })} />}
         <Field label="From">
           <input style={styles.input} type="date" value={move.start_date} onChange={(e) => setMove({ ...move, start_date: e.target.value })} required />
         </Field>
@@ -508,14 +491,11 @@ function PayGroups({ teams, workers, today, run }) {
         </button>
       </form>
       {move.target === "workers" && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem 1.1rem", marginTop: "0.8rem" }}>
-          {workers.map((worker) => (
-            <label key={worker.id} style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-              <input type="checkbox" checked={move.worker_ids.includes(worker.id)} onChange={() => toggleWorker(worker.id)} />
-              {worker.name}
-            </label>
-          ))}
-        </div>
+        <WorkerChecks
+          workers={workers}
+          chosen={move.worker_ids}
+          onToggle={(id) => setMove((current) => ({ ...current, worker_ids: toggled(current.worker_ids, id) }))}
+        />
       )}
     </div>
   );
@@ -669,20 +649,17 @@ function WorkTimePage() {
     load().catch((err) => setError(err.message));
   }, [load]);
 
-  const run = useCallback(
-    async (action) => {
-      setError("");
-      try {
-        await action();
-        await load();
-        return true;
-      } catch (err) {
-        setError(err.message);
-        return false;
-      }
-    },
-    [load]
-  );
+  async function run(action) {
+    setError("");
+    try {
+      await action();
+      await load();
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    }
+  }
 
   if (!canManage) return <Navigate to="/projects" replace />;
 

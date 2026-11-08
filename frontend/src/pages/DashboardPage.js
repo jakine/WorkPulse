@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import { api, apiList } from "../api/client";
 import { ProgressMeter, StatusBadge } from "../components/charts";
 import { formatMoney } from "../components/money";
 import { addDays, isoDate, parseDate } from "../components/ReportCalendar";
@@ -40,8 +40,8 @@ function PeopleToday({ company, canManage }) {
 
   useEffect(() => {
     // Loaded apart from the main dashboard, so one failing call can't blank the page.
-    api(`/days-off/?status=approved&from=${today}&to=${today}&page_size=100`)
-      .then((data) => setOff(data.results || []))
+    apiList(`/days-off/?status=approved&from=${today}&to=${today}`)
+      .then(setOff)
       .catch(() => setOff([]));
     api(`/timesheets/?from=${yesterday}&to=${yesterday}`)
       .then((sheet) => setMissing(sheet.workers.filter((row) => row.cells[yesterday]?.flags.includes("missing"))))

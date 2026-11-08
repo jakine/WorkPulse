@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { api, apiList } from "../api/client";
-import { METHODS, formatMoney, payTypeLabel } from "../components/money";
+import { METHODS, formatMoney, num, payTypeLabel } from "../components/money";
 import { Badge, ErrorText, Field, PageHeader, companyToday, styles } from "../components/ui";
 import { useAuth, useRole } from "../context/AuthContext";
 
-const num = { ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
 const numHead = { ...styles.th, textAlign: "right" };
 
 function Owed({ rows, currency }) {
@@ -264,19 +263,12 @@ function RecordAdvance({ workers, today, currency, onAct }) {
 }
 
 function PaySettingsForm({ settings, onAct }) {
-  const [form, setForm] = useState(null);
+  const [form, setForm] = useState(() => ({
+    currency: settings.currency,
+    extra_hours_multiplier: settings.extra_hours_multiplier ?? "",
+    pay_holidays_for_day_rate: settings.pay_holidays_for_day_rate,
+  }));
 
-  useEffect(() => {
-    if (settings) {
-      setForm({
-        currency: settings.currency,
-        extra_hours_multiplier: settings.extra_hours_multiplier ?? "",
-        pay_holidays_for_day_rate: settings.pay_holidays_for_day_rate,
-      });
-    }
-  }, [settings]);
-
-  if (!form) return null;
   return (
     <form
       onSubmit={(event) => {
@@ -375,20 +367,17 @@ function PayPage() {
     load().catch((err) => setError(err.message));
   }, [load]);
 
-  const act = useCallback(
-    async (action) => {
-      setError("");
-      try {
-        await action();
-        await load();
-        return true;
-      } catch (err) {
-        setError(err.message);
-        return false;
-      }
-    },
-    [load]
-  );
+  async function act(action) {
+    setError("");
+    try {
+      await action();
+      await load();
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    }
+  }
 
   if (!isOwner) return <Navigate to="/dashboard" replace />;
 
@@ -455,7 +444,7 @@ function PayPage() {
 
       {view && <RunView data={view} today={today} onAct={act} />}
       <RecordAdvance workers={workers} today={today} currency={currency} onAct={act} />
-      <PaySettingsForm settings={settings} onAct={act} />
+      {settings && <PaySettingsForm key={JSON.stringify(settings)} settings={settings} onAct={act} />}
     </div>
   );
 }

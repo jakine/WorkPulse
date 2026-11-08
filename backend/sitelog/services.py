@@ -6,7 +6,7 @@ from operations.models import SiteReport, Workplace, WorkplaceTeam
 from sitelog.models import CrewAttendance, DailyLog
 from timesheets.locks import ensure_worker_open
 from timesheets.models import Leave, OtherWork
-from timesheets.schedule import WorkCalendar, days_between
+from timesheets.schedule import WorkCalendar, covers, days_between
 from timesheets.services import check_day_total
 from workforce.models import TeamMembership, Worker
 from workforce.services import active_on
@@ -226,7 +226,7 @@ def fill_from_schedule(worker, start, end):
         expected = calendar.expected_hours(worker.pk, day)
         if expected <= 0 or day in recorded:
             continue
-        leave = next((leave for leave in leaves if leave.covers(day)), None)
+        leave = next((leave for leave in leaves if covers(leave, day)), None)
         if leave is not None and not leave.half_day:
             continue
         try:

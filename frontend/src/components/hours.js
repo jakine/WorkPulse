@@ -8,6 +8,12 @@ export const WEEKDAYS = [
   ["sun", "Sun"],
 ];
 
+export const CYCLES = [
+  ["weekly", "Weekly"],
+  ["two_weeks", "Every two weeks"],
+  ["monthly", "Monthly"],
+];
+
 export function hoursLabel(value) {
   const number = Number(value);
   return number ? String(number) : "–";
