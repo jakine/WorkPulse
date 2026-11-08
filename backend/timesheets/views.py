@@ -15,7 +15,7 @@ from operations.serializers import PeriodSerializer
 from operations.models import Workplace, WorkplaceTeam
 from sitelog.services import fill_from_schedule, set_worker_hours, team_on
 from timesheets.leave import cancel_leave, decide_leave, leave_balances, leave_days, off_by_team
-from timesheets.locks import ensure_company_open, ensure_worker_open
+from timesheets.locks import ensure_company_open
 from timesheets.models import (
     WEEKDAYS,
     Holiday,
@@ -90,6 +90,7 @@ def target_label(request, data, workers):
 class WorkScheduleViewSet(CompanyScopedViewSet):
     serializer_class = WorkScheduleSerializer
     queryset = WorkSchedule.objects.all()
+    http_method_names = ["get", "post", "delete", "head", "options"]
     pagination_class = None
 
     def get_queryset(self):
@@ -162,26 +163,19 @@ class WorkScheduleViewSet(CompanyScopedViewSet):
 class ScheduleAssignmentViewSet(CompanyScopedViewSet):
     serializer_class = ScheduleAssignmentSerializer
     queryset = ScheduleAssignment.objects.select_related("schedule", "worker")
-    http_method_names = ["get", "delete", "head", "options"]
+    http_method_names = ["get", "head", "options"]
     pagination_class = None
 
     def get_queryset(self):
         queryset = super().get_queryset()
         worker = self.request.query_params.get("worker")
-        if worker:
-            queryset = queryset.filter(Q(worker_id=worker) | Q(worker__isnull=True))
-        return queryset
-
-    def perform_destroy(self, instance):
-        if instance.worker_id is None:
-            raise ValidationError("Change the company default by applying another schedule to everyone.")
-        ensure_worker_open(instance.worker, instance.start_date, instance.end_date)
-        instance.delete()
+        return queryset.filter(worker_id=worker) if worker else queryset
 
 
 class HolidayViewSet(CompanyScopedViewSet):
     serializer_class = HolidaySerializer
     queryset = Holiday.objects.all()
+    http_method_names = ["get", "post", "delete", "head", "options"]
     pagination_class = None
 
     def get_queryset(self):
@@ -195,12 +189,6 @@ class HolidayViewSet(CompanyScopedViewSet):
         day = serializer.validated_data["date"]
         ensure_company_open(self.request.company, day, day)
         super().perform_create(serializer)
-
-    def perform_update(self, serializer):
-        old, new = serializer.instance.date, serializer.validated_data.get("date", serializer.instance.date)
-        ensure_company_open(self.request.company, old, old)
-        ensure_company_open(self.request.company, new, new)
-        serializer.save()
 
     def perform_destroy(self, instance):
         ensure_company_open(self.request.company, instance.date, instance.date)
@@ -231,8 +219,8 @@ def leave_event(leave):
 
 class LeaveViewSet(CompanyScopedViewSet):
     serializer_class = LeaveSerializer
-    queryset = Leave.objects.select_related("company", "worker", "leave_type", "requested_by", "decided_by")
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    queryset = Leave.objects.select_related("company", "worker", "leave_type")
+    http_method_names = ["get", "post", "head", "options"]
     lead_actions = ("create", "cancel")
 
     def scope_for_lead(self, queryset):
@@ -247,8 +235,6 @@ class LeaveViewSet(CompanyScopedViewSet):
         params = self.request.query_params
         if params.get("worker"):
             queryset = queryset.filter(worker_id=params["worker"])
-        if params.get("team"):
-            queryset = queryset.filter(worker__team_id=params["team"])
         if params.get("status"):
             queryset = queryset.filter(status__in=params["status"].split(","))
         if params.get("from"):
@@ -277,10 +263,6 @@ class LeaveViewSet(CompanyScopedViewSet):
         leave = serializer.save(company=self.request.company)
         verb = "leave.approved" if leave.status == Leave.Status.APPROVED else "leave.requested"
         record_event(self.request, verb, leave, data=leave_event(leave))
-
-    def perform_update(self, serializer):
-        leave = serializer.save()
-        record_event(self.request, "leave.changed", leave, data=leave_event(leave))
 
     def _decide(self, request, approve):
         leave = decide_leave(self.get_object(), request.user, approve=approve)
@@ -349,12 +331,10 @@ class LeaveViewSet(CompanyScopedViewSet):
         year = query.validated_data.get("year") or request.company.today().year
         workers = Worker.objects.filter(company=request.company).exclude(left_on__lt=date(year, 1, 1))
         workers = workers.exclude(hired_on__gt=date(year, 12, 31))
-        if query.validated_data.get("team"):
-            workers = workers.filter(team_id=query.validated_data["team"])
         if is_team_lead(request):
             workers = workers.filter(team__in=lead_teams(request))
-        if request.query_params.get("worker"):
-            workers = workers.filter(pk=request.query_params["worker"])
+        if query.validated_data.get("worker"):
+            workers = workers.filter(pk=query.validated_data["worker"])
         return Response(leave_balances(request.company, workers, year, request.company.today()))
 
     @action(detail=False, methods=["get"], url_path="by-team")
@@ -512,21 +492,11 @@ class TimesheetViewSet(viewsets.ViewSet):
 class OtherWorkViewSet(CompanyScopedViewSet):
     serializer_class = OtherWorkSerializer
     queryset = OtherWork.objects.select_related("worker")
+    http_method_names = ["get", "post", "delete", "head", "options"]
     pagination_class = None
 
     def scope_for_lead(self, queryset):
         return queryset.filter(worker__memberships__team__in=lead_teams(self.request)).distinct()
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        params = self.request.query_params
-        if params.get("worker"):
-            queryset = queryset.filter(worker_id=params["worker"])
-        if params.get("from"):
-            queryset = queryset.filter(work_date__gte=params["from"])
-        if params.get("to"):
-            queryset = queryset.filter(work_date__lte=params["to"])
-        return queryset
 
     def perform_destroy(self, instance):
         delete_other_work(instance)

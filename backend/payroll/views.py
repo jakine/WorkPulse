@@ -81,6 +81,7 @@ class OwedView(APIView):
 class PayRateViewSet(PayViewSet):
     serializer_class = PayRateSerializer
     queryset = PayRate.objects.select_related("worker")
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self):
         return self.filter_worker(super().get_queryset())
@@ -88,12 +89,6 @@ class PayRateViewSet(PayViewSet):
     def perform_create(self, serializer):
         ensure_rate_open(serializer.validated_data["worker"], serializer.validated_data["start_date"])
         super().perform_create(serializer)
-
-    def perform_update(self, serializer):
-        rate = serializer.instance
-        ensure_rate_open(rate.worker, rate.start_date)
-        ensure_rate_open(rate.worker, serializer.validated_data.get("start_date", rate.start_date))
-        serializer.save()
 
     def perform_destroy(self, instance):
         ensure_rate_open(instance.worker, instance.start_date)
@@ -103,23 +98,14 @@ class PayRateViewSet(PayViewSet):
 class PayAdjustmentViewSet(PayViewSet):
     serializer_class = PayAdjustmentSerializer
     queryset = PayAdjustment.objects.select_related("worker")
+    http_method_names = ["get", "post", "delete", "head", "options"]
 
     def get_queryset(self):
-        queryset = self.filter_worker(super().get_queryset())
-        if self.request.query_params.get("open") == "1":
-            queryset = queryset.filter(pay_line__isnull=True)
-        return queryset
-
-    def _check_open(self, adjustment):
-        if adjustment.pay_line_id is not None:
-            raise ValidationError("This is already part of approved pay and can't change.")
-
-    def perform_update(self, serializer):
-        self._check_open(serializer.instance)
-        serializer.save()
+        return self.filter_worker(super().get_queryset())
 
     def perform_destroy(self, instance):
-        self._check_open(instance)
+        if instance.pay_line_id is not None:
+            raise ValidationError("This is already part of approved pay and can't change.")
         instance.delete()
 
 
@@ -128,13 +114,7 @@ class PaymentViewSet(PayViewSet):
     queryset = Payment.objects.select_related("worker")
 
     def get_queryset(self):
-        queryset = self.filter_worker(super().get_queryset())
-        params = self.request.query_params
-        if params.get("from"):
-            queryset = queryset.filter(paid_on__gte=params["from"])
-        if params.get("to"):
-            queryset = queryset.filter(paid_on__lte=params["to"])
-        return queryset
+        return self.filter_worker(super().get_queryset())
 
 
 def money_or_none(value):

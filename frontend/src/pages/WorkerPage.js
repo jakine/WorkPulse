@@ -130,7 +130,7 @@ function WorkerSchedule({ worker, today, canManage, onChanged, onError }) {
       apiList(`/schedule-assignments/?worker=${worker.id}`),
     ]);
     setSchedules(scheduleRows);
-    setHistory(rows.filter((row) => row.worker === worker.id));
+    setHistory(rows);
   }, [worker.id]);
 
   useEffect(() => {

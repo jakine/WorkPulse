@@ -125,21 +125,19 @@ def copy_holidays(company, from_year, to_year):
     return created
 
 
-def hours_on_day(worker, day, skip_attendance=(), skip_other=()):
+def hours_on_day(worker, day, skip_attendance=()):
     """Hours already recorded for a worker on a day, across projects and other work."""
     site = (
         CrewAttendance.objects.filter(worker=worker, work_date=day)
         .exclude(pk__in=skip_attendance)
         .aggregate(total=Sum("hours"))["total"]
     )
-    other = (
-        OtherWork.objects.filter(worker=worker, work_date=day).exclude(pk__in=skip_other).aggregate(total=Sum("hours"))["total"]
-    )
+    other = OtherWork.objects.filter(worker=worker, work_date=day).aggregate(total=Sum("hours"))["total"]
     return (site or Decimal("0")) + (other or Decimal("0"))
 
 
-def check_day_total(worker, day, adding, skip_attendance=(), skip_other=()):
-    if hours_on_day(worker, day, skip_attendance, skip_other) + adding > MAX_DAY_HOURS:
+def check_day_total(worker, day, adding, skip_attendance=()):
+    if hours_on_day(worker, day, skip_attendance) + adding > MAX_DAY_HOURS:
         raise ValidationError({"hours": f"That would give {worker.name} more than 24 hours on {day}."})
 
 
@@ -150,22 +148,17 @@ def check_can_record(worker, day):
         raise ValidationError({"work_date": f"{worker.name} wasn't employed on {day}."})
 
 
-def save_other_work(entry, user=None):
-    """Create or change work done away from projects."""
+def save_other_work(entry, user):
+    """Record work done away from projects."""
     worker = entry.worker
     with transaction.atomic():
         Worker.objects.select_for_update().get(pk=worker.pk)
-        previous = OtherWork.objects.filter(pk=entry.pk).first() if entry.pk else None
-        if previous is not None and previous.work_date != entry.work_date:
-            ensure_worker_open(worker, previous.work_date, previous.work_date)
         ensure_worker_open(worker, entry.work_date, entry.work_date)
         check_can_record(worker, entry.work_date)
-        check_day_total(worker, entry.work_date, entry.hours, skip_other=[entry.pk] if entry.pk else ())
-        clash = OtherWork.objects.filter(worker=worker, work_date=entry.work_date, kind=entry.kind).exclude(pk=entry.pk)
-        if clash.exists():
+        check_day_total(worker, entry.work_date, entry.hours)
+        if OtherWork.objects.filter(worker=worker, work_date=entry.work_date, kind=entry.kind).exists():
             raise ValidationError({"kind": "This kind of work is already recorded that day. Change its hours instead."})
-        if entry.pk is None and user is not None:
-            entry.created_by = user
+        entry.created_by = user
         entry.note = entry.note.strip()
         entry.save()
     return entry

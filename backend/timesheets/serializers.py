@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from companies.permissions import is_team_lead
 from companies.serializers import CompanyWorkerMixin, unique_name
-from timesheets.leave import leave_days, request_leave, update_leave
+from timesheets.leave import leave_days, request_leave
 from timesheets.models import (
     WEEKDAYS,
     Holiday,
@@ -79,11 +79,6 @@ class WorkScheduleSerializer(serializers.ModelSerializer):
         hours = {name: validated_data.pop(name) for name in WEEKDAYS}
         return create_schedule(validated_data["company"], validated_data["name"], hours, validated_data["day_hours"])
 
-    def update(self, instance, validated_data):
-        instance.name = validated_data.get("name", instance.name)
-        instance.save(update_fields=["name"])
-        return instance
-
 
 class ApplyScheduleSerializer(serializers.Serializer):
     everyone = serializers.BooleanField(default=False)
@@ -114,10 +109,7 @@ class HolidaySerializer(serializers.ModelSerializer):
         fields = ["id", "date", "name"]
 
     def validate_date(self, day):
-        clash = Holiday.objects.filter(company=self.context["request"].company, date=day)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        if clash.exists():
+        if Holiday.objects.filter(company=self.context["request"].company, date=day).exists():
             raise serializers.ValidationError("There is already a holiday on that day.")
         return day
 
@@ -159,9 +151,6 @@ class LeaveSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
     type_name = serializers.CharField(source="leave_type.name", read_only=True)
     type_code = serializers.CharField(source="leave_type.code", read_only=True)
     paid = serializers.BooleanField(source="leave_type.paid", read_only=True)
-    uses_allowance = serializers.BooleanField(source="leave_type.uses_allowance", read_only=True)
-    requested_by_email = serializers.EmailField(source="requested_by.email", read_only=True, default="")
-    decided_by_email = serializers.EmailField(source="decided_by.email", read_only=True, default="")
     days = serializers.SerializerMethodField()
 
     class Meta:
@@ -174,20 +163,15 @@ class LeaveSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
             "type_name",
             "type_code",
             "paid",
-            "uses_allowance",
             "start_date",
             "end_date",
             "half_day",
             "status",
             "note",
             "requested_by",
-            "requested_by_email",
-            "decided_by_email",
-            "decided_at",
-            "created_at",
             "days",
         ]
-        read_only_fields = ["status", "requested_by", "decided_at", "created_at"]
+        read_only_fields = ["status", "requested_by"]
 
     def validate_leave_type(self, leave_type):
         if leave_type.company_id != self.context["request"].company.id:
@@ -221,10 +205,6 @@ class LeaveSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
             approve=not is_team_lead(request),
         )
 
-    def update(self, instance, validated_data):
-        validated_data.pop("worker", None)
-        return update_leave(instance, validated_data)
-
 
 class LeavePreviewSerializer(serializers.Serializer):
     worker = serializers.IntegerField(min_value=1)
@@ -236,7 +216,7 @@ class LeavePreviewSerializer(serializers.Serializer):
 
 class YearSerializer(serializers.Serializer):
     year = serializers.IntegerField(min_value=2000, max_value=2100, required=False)
-    team = serializers.IntegerField(min_value=1, required=False)
+    worker = serializers.IntegerField(min_value=1, required=False)
 
 
 class OtherWorkSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
@@ -248,12 +228,6 @@ class OtherWorkSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
 
     def create(self, validated_data):
         return save_other_work(OtherWork(**validated_data), user=self.context["request"].user)
-
-    def update(self, instance, validated_data):
-        validated_data.pop("worker", None)
-        for field, value in validated_data.items():
-            setattr(instance, field, value)
-        return save_other_work(instance)
 
 
 class PayGroupSerializer(serializers.ModelSerializer):

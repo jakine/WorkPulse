@@ -301,7 +301,6 @@ def sheet_json(company, rows, start, end, project_names):
         "days": [
             {"date": str(day), "weekday": day.weekday(), "holiday": holidays.get(day)} for day in days_between(start, end)
         ],
-        "projects": {str(key): value for key, value in project_names.items()},
         "workers": workers,
         "daily": {key: {"people": value["people"], "hours": amount(value["hours"])} for key, value in daily.items()},
     }

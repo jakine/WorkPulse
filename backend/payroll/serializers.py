@@ -56,7 +56,6 @@ class PaymentSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
 
 class PayLineSerializer(serializers.ModelSerializer):
     worker_name = serializers.CharField(source="worker.name", read_only=True)
-    pay_type_name = serializers.CharField(source="get_pay_type_display", read_only=True)
 
     class Meta:
         model = PayLine
@@ -65,7 +64,6 @@ class PayLineSerializer(serializers.ModelSerializer):
             "worker",
             "worker_name",
             "pay_type",
-            "pay_type_name",
             "rate",
             "days",
             "hours",
