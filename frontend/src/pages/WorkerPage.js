@@ -5,8 +5,8 @@ import { BalanceTiles, DayOffForm, DayOffList } from "../components/DaysOff";
 import WorkerPay from "../components/WorkerPay";
 import { addDays, isoDate, parseDate, startOfWeek } from "../components/ReportCalendar";
 import { WeeklyColumns } from "../components/charts";
-import { Badge, ErrorText, Field, PageHeader, Tabs, companyToday, formatDay, styles } from "../components/ui";
-import { WEEKDAYS, hoursLabel } from "../components/hours";
+import { Badge, ErrorText, Field, PageHeader, Tabs, companyToday, formatDay, labelFor, styles } from "../components/ui";
+import { CYCLES, WEEKDAYS, hoursLabel } from "../components/hours";
 import { useAuth, useRole } from "../context/AuthContext";
 
 function detailsForm(worker) {
@@ -241,8 +241,6 @@ const TABS = [
   ["days-off", "Days off"],
 ];
 
-const CYCLES = { weekly: "weekly", two_weeks: "every two weeks", monthly: "monthly" };
-
 function WorkerTime({ worker, today, canManage, onError, onChanged }) {
   const monthStart = `${today.slice(0, 8)}01`;
   const [month, setMonth] = useState(null);
@@ -317,7 +315,7 @@ function WorkerTime({ worker, today, canManage, onError, onChanged }) {
         <p style={{ marginTop: 0 }}>
           {worker.pay_group ? (
             <>
-              <strong>{worker.pay_group.name}</strong>, settled {CYCLES[worker.pay_group.cycle]}
+              <strong>{worker.pay_group.name}</strong>, settled {labelFor(CYCLES, worker.pay_group.cycle).toLowerCase()}
               {worker.pay_group.since ? ` since ${formatDay(worker.pay_group.since)}` : ""}.
             </>
           ) : (
@@ -380,16 +378,6 @@ function WorkerDaysOff({ worker, today, canManage, canAsk, userId, onError }) {
     load().catch((err) => onError(err.message));
   }, [load, onError]);
 
-  async function act(row, action) {
-    onError("");
-    try {
-      await api(`/days-off/${row.id}/${action}/`, { method: "POST" });
-      await load();
-    } catch (err) {
-      onError(err.message);
-    }
-  }
-
   return (
     <>
       <BalanceTiles balance={balance} />
@@ -406,7 +394,7 @@ function WorkerDaysOff({ worker, today, canManage, canAsk, userId, onError }) {
       )}
       <div style={styles.card}>
         <h2 style={{ marginTop: 0 }}>Days off</h2>
-        <DayOffList rows={rows} showWorker={false} canManage={canManage} userId={userId} onAction={act} />
+        <DayOffList rows={rows} showWorker={false} canManage={canManage} userId={userId} onChanged={load} onError={onError} />
       </div>
     </>
   );

@@ -59,7 +59,6 @@ function show(value) {
 
 function HoursInput({ value, label, missing, extra, onSave }) {
   const [draft, setDraft] = useState(show(value));
-  useEffect(() => setDraft(show(value)), [value]);
 
   function commit() {
     const next = draft.trim();
@@ -139,6 +138,7 @@ function Cell({ row, day, cell, canManage, onSave, onOpen }) {
     return (
       <td style={style}>
         <HoursInput
+          key={cell.worked}
           value={cell.worked}
           label={`Hours for ${label}`}
           missing={cell.flags.includes("missing")}
@@ -222,9 +222,9 @@ function TimesheetsPage() {
     load().catch((err) => setError(err.message));
   }, [load]);
 
-  const reload = useCallback(() => {
+  function reload() {
     load().catch((err) => setError(err.message));
-  }, [load]);
+  }
 
   function shift(direction) {
     if (!sheet) return;

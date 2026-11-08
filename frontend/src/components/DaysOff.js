@@ -144,7 +144,17 @@ export function DayOffForm({ workers, types, fixedWorker, canManage, today, onSa
   );
 }
 
-export function DayOffList({ rows, canManage, userId, showWorker = true, onAction, empty = "No days off." }) {
+export function DayOffList({ rows, canManage, userId, showWorker = true, onChanged, onError, empty = "No days off." }) {
+  async function onAction(row, action) {
+    onError("");
+    try {
+      await api(`/days-off/${row.id}/${action}/`, { method: "POST" });
+      await onChanged();
+    } catch (err) {
+      onError(err.message);
+    }
+  }
+
   if (rows.length === 0) return <p style={{ color: "var(--muted)" }}>{empty}</p>;
   return (
     <table style={styles.table}>

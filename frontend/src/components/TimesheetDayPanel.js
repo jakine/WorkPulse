@@ -1,24 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiList } from "../api/client";
 import { addDays, formatLongDay, isoDate, parseDate, startOfWeek } from "./ReportCalendar";
-import { Badge, ErrorText, Field, styles } from "./ui";
-
-const panelStyle = {
-  position: "fixed",
-  top: 0,
-  right: 0,
-  bottom: 0,
-  width: "min(460px, 100vw)",
-  background: "var(--surface)",
-  borderLeft: "1px solid var(--line)",
-  boxShadow: "var(--shadow)",
-  padding: "1.25rem",
-  overflowY: "auto",
-  zIndex: 20,
-  display: "grid",
-  gap: "1rem",
-  alignContent: "start",
-};
+import { Badge, ErrorText, Field, labelFor, styles } from "./ui";
 
 const small = { ...styles.input, width: "5rem", minWidth: 0 };
 const section = { display: "grid", gap: "0.5rem" };
@@ -29,7 +12,6 @@ function hours(value) {
 
 function SiteRow({ entry, editable, onSave }) {
   const [draft, setDraft] = useState(String(Number(entry.hours)));
-  useEffect(() => setDraft(String(Number(entry.hours))), [entry.hours]);
   return (
     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
       <strong style={{ flex: "1 1 8rem" }}>{entry.project_name || "Project"}</strong>
@@ -147,7 +129,7 @@ function TimesheetDayPanel({ workerId, date, canManage, onClose, onChanged }) {
   const freePlacements = day ? day.placements.filter((place) => !siteEntries.some((entry) => entry.workplace === place.workplace)) : [];
 
   return (
-    <aside style={panelStyle} aria-label="Day details">
+    <aside style={styles.panel} aria-label="Day details">
       <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "start" }}>
         <div>
           <h2 style={{ margin: 0 }}>{day?.name || "…"}</h2>
@@ -181,7 +163,7 @@ function TimesheetDayPanel({ workerId, date, canManage, onClose, onChanged }) {
             <h3 style={{ margin: 0 }}>On projects</h3>
             {siteEntries.length === 0 && <p style={{ margin: 0, color: "var(--muted)" }}>No project hours.</p>}
             {siteEntries.map((entry) => (
-              <SiteRow key={entry.id} entry={entry} editable={writable && !entry.day_approved} onSave={saveSite} />
+              <SiteRow key={`${entry.id}:${entry.hours}`} entry={entry} editable={writable && !entry.day_approved} onSave={saveSite} />
             ))}
             {writable && freePlacements.length > 0 && (
               <div style={styles.row}>
@@ -222,7 +204,7 @@ function TimesheetDayPanel({ workerId, date, canManage, onClose, onChanged }) {
             {otherEntries.map((entry) => (
               <div key={entry.id} style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
                 <strong style={{ flex: 1 }}>
-                  {(day.other_kinds.find(([key]) => key === entry.kind) || [entry.kind, entry.kind])[1]} · {hours(entry.hours)}
+                  {labelFor(day.other_kinds, entry.kind)} · {hours(entry.hours)}
                   {entry.note && <span style={{ color: "var(--muted)", fontWeight: 400 }}> · {entry.note}</span>}
                 </strong>
                 {writable && (
