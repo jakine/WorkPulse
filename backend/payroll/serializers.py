@@ -1,13 +1,7 @@
 from rest_framework import serializers
 
+from companies.serializers import CompanyWorkerMixin
 from payroll.models import PayAdjustment, PayLine, PayRate, PaySettings, Payment
-
-
-class CompanyWorkerMixin:
-    def validate_worker(self, worker):
-        if worker.company_id != self.context["request"].company.id:
-            raise serializers.ValidationError("Worker must belong to this company.")
-        return worker
 
 
 class PaySettingsSerializer(serializers.ModelSerializer):

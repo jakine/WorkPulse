@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from companies.permissions import is_team_lead
+from companies.serializers import CompanyWorkerMixin, unique_name
 from timesheets.leave import leave_days, request_leave, update_leave
 from timesheets.models import (
     WEEKDAYS,
@@ -72,15 +73,7 @@ class WorkScheduleSerializer(serializers.ModelSerializer):
         return getattr(schedule, "worker_count", 0)
 
     def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        clash = WorkSchedule.objects.filter(company=self.context["request"].company, name__iexact=name)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        if clash.exists():
-            raise serializers.ValidationError("A schedule with this name already exists.")
-        return name
+        return unique_name(WorkSchedule, self.context["request"].company, name, self.instance, "schedule")
 
     def create(self, validated_data):
         hours = {name: validated_data.pop(name) for name in WEEKDAYS}
@@ -120,12 +113,6 @@ class HolidaySerializer(serializers.ModelSerializer):
         model = Holiday
         fields = ["id", "date", "name"]
 
-    def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        return name
-
     def validate_date(self, day):
         clash = Holiday.objects.filter(company=self.context["request"].company, date=day)
         if self.instance is not None:
@@ -145,25 +132,15 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         model = LeaveType
         fields = ["id", "name", "code", "paid", "uses_allowance", "position", "archived"]
 
-    def _clash(self, **lookup):
-        clash = LeaveType.objects.filter(company=self.context["request"].company, **lookup)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        return clash.exists()
-
     def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        if self._clash(name__iexact=name):
-            raise serializers.ValidationError("A type with this name already exists.")
-        return name
+        return unique_name(LeaveType, self.context["request"].company, name, self.instance, "type")
 
     def validate_code(self, code):
-        code = code.strip().upper()
-        if not code:
-            raise serializers.ValidationError("Enter a one or two letter code.")
-        if self._clash(code=code):
+        code = code.upper()
+        clash = LeaveType.objects.filter(company=self.context["request"].company, code=code)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
             raise serializers.ValidationError("Another type uses this code.")
         return code
 
@@ -177,7 +154,7 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class LeaveSerializer(serializers.ModelSerializer):
+class LeaveSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
     worker_name = serializers.CharField(source="worker.name", read_only=True)
     type_name = serializers.CharField(source="leave_type.name", read_only=True)
     type_code = serializers.CharField(source="leave_type.code", read_only=True)
@@ -211,11 +188,6 @@ class LeaveSerializer(serializers.ModelSerializer):
             "days",
         ]
         read_only_fields = ["status", "requested_by", "decided_at", "created_at"]
-
-    def validate_worker(self, worker):
-        if worker.company_id != self.context["request"].company.id:
-            raise serializers.ValidationError("Worker must belong to this company.")
-        return worker
 
     def validate_leave_type(self, leave_type):
         if leave_type.company_id != self.context["request"].company.id:
@@ -267,17 +239,12 @@ class YearSerializer(serializers.Serializer):
     team = serializers.IntegerField(min_value=1, required=False)
 
 
-class OtherWorkSerializer(serializers.ModelSerializer):
+class OtherWorkSerializer(CompanyWorkerMixin, serializers.ModelSerializer):
     worker_name = serializers.CharField(source="worker.name", read_only=True)
 
     class Meta:
         model = OtherWork
         fields = ["id", "worker", "worker_name", "work_date", "hours", "kind", "note"]
-
-    def validate_worker(self, worker):
-        if worker.company_id != self.context["request"].company.id:
-            raise serializers.ValidationError("Worker must belong to this company.")
-        return worker
 
     def create(self, validated_data):
         return save_other_work(OtherWork(**validated_data), user=self.context["request"].user)
@@ -301,15 +268,7 @@ class PayGroupSerializer(serializers.ModelSerializer):
         return getattr(group, "member_count", 0)
 
     def validate_name(self, name):
-        name = name.strip()
-        if not name:
-            raise serializers.ValidationError("Enter a name.")
-        clash = PayGroup.objects.filter(company=self.context["request"].company, name__iexact=name)
-        if self.instance is not None:
-            clash = clash.exclude(pk=self.instance.pk)
-        if clash.exists():
-            raise serializers.ValidationError("A pay group with this name already exists.")
-        return name
+        return unique_name(PayGroup, self.context["request"].company, name, self.instance, "pay group")
 
     def validate(self, attrs):
         cycle = attrs.get("cycle", getattr(self.instance, "cycle", PayGroup.Cycle.MONTHLY))

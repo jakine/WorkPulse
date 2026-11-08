@@ -14,13 +14,10 @@ from decimal import Decimal
 from django.db.models import F, Q
 
 from timesheets.models import Holiday, ScheduleAssignment, WorkScheduleVersion
+from workforce.services import overlapping, week_start
 
 ZERO = Decimal("0")
 DEFAULT_DAY_HOURS = Decimal("8")
-
-
-def week_start(day):
-    return day - timedelta(days=day.weekday())
 
 
 def week_end(day):
@@ -66,8 +63,7 @@ class WorkCalendar:
         rows = (
             ScheduleAssignment.objects.filter(company=company)
             .filter(Q(worker__isnull=True) | Q(worker_id__in=list(self.workers)))
-            .filter(Q(start_date__isnull=True) | Q(start_date__lte=self.end))
-            .filter(Q(end_date__isnull=True) | Q(end_date__gte=self.start))
+            .filter(overlapping(self.start, self.end))
         )
         self.company_rows = []
         self.worker_rows = defaultdict(list)
@@ -97,15 +93,12 @@ class WorkCalendar:
     def holiday(self, day):
         return self.holidays.get(day)
 
-    def employed(self, worker_id, day):
-        return self.workers[worker_id].employed_on(day)
-
     def scheduled_hours(self, worker_id, day):
         version = self.version_on(worker_id, day)
         return version.hours_on(day) if version else ZERO
 
     def expected_hours(self, worker_id, day):
-        if day in self.holidays or not self.employed(worker_id, day):
+        if day in self.holidays or not self.workers[worker_id].employed_on(day):
             return ZERO
         return self.scheduled_hours(worker_id, day)
 
@@ -118,8 +111,3 @@ class WorkCalendar:
         if scheduled > 0 and day not in self.holidays:
             return scheduled
         return self.day_hours(worker_id, day)
-
-
-def expected_hours_on(worker, day):
-    """One-off lookup for a single worker and day."""
-    return WorkCalendar(worker.company, [worker], day, day).expected_hours(worker.pk, day)

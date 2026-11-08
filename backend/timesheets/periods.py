@@ -4,7 +4,6 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -12,6 +11,7 @@ from timesheets.locks import ensure_group_open, ensure_worker_open
 from timesheets.models import Leave, PayGroup, PayGroupAssignment, TimesheetPeriod
 from timesheets.schedule import month_end, month_start, week_start
 from workforce.models import Worker
+from workforce.services import overlapping
 
 DEFAULT_PAY_GROUP_NAME = "Monthly"
 TWO_WEEK_ANCHOR = date(2024, 1, 1)  # a Monday, used when a two-week group has no anchor of its own
@@ -67,12 +67,7 @@ def period_bounds(group, day):
 
 def group_spans(group, start, end):
     """{worker: [(first, last), ...]}: the days of start..end each worker spent in the group."""
-    rows = (
-        PayGroupAssignment.objects.filter(pay_group=group)
-        .filter(Q(start_date__isnull=True) | Q(start_date__lte=end))
-        .filter(Q(end_date__isnull=True) | Q(end_date__gte=start))
-        .select_related("worker")
-    )
+    rows = PayGroupAssignment.objects.filter(overlapping(start, end), pay_group=group).select_related("worker")
     spans = defaultdict(list)
     for row in rows:
         spans[row.worker].append((max(start, row.start_date or start), min(end, row.end_date or end)))

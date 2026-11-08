@@ -200,9 +200,6 @@ class Leave(models.Model):
     def __str__(self):
         return f"{self.worker} {self.leave_type} {self.start_date}–{self.end_date}"
 
-    def covers(self, day):
-        return self.start_date <= day <= self.end_date
-
 
 class OtherWork(models.Model):
     """Hours a worker worked away from any project: at the yard, in the office, travelling or training."""

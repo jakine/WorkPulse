@@ -60,7 +60,7 @@ from timesheets.serializers import (
 )
 from timesheets.services import assign_schedule, change_schedule_hours, copy_holidays, delete_other_work
 from workforce.models import Team, TeamMembership, Worker
-from workforce.services import active_on, team_members_on
+from workforce.services import active_on, overlapping, team_members_on
 
 
 def target_workers(request, data):
@@ -239,8 +239,7 @@ class LeaveViewSet(CompanyScopedViewSet):
         """Days off of people who were in one of the lead's teams at the time."""
         return queryset.filter(
             Q(worker__memberships__team__in=lead_teams(self.request))
-            & (Q(worker__memberships__start_date__isnull=True) | Q(worker__memberships__start_date__lte=F("end_date")))
-            & (Q(worker__memberships__end_date__isnull=True) | Q(worker__memberships__end_date__gte=F("start_date")))
+            & overlapping(F("start_date"), F("end_date"), "worker__memberships__")
         ).distinct()
 
     def get_queryset(self):
@@ -369,20 +368,10 @@ class LeaveViewSet(CompanyScopedViewSet):
         return Response(off_by_team(request.company, start, end))
 
 
-def in_range(queryset, start, end, prefix=""):
-    """Rows with optional start_date/end_date that overlap start..end."""
-    return queryset.filter(
-        (Q(**{f"{prefix}start_date__isnull": True}) | Q(**{f"{prefix}start_date__lte": end}))
-        & (Q(**{f"{prefix}end_date__isnull": True}) | Q(**{f"{prefix}end_date__gte": start}))
-    )
-
-
 def lead_workers(request, queryset, start, end):
     """Workers who were in one of the lead's teams at some point between start and end."""
-    teams = lead_teams(request)
-    return queryset.filter(
-        pk__in=in_range(TeamMembership.objects.filter(team__in=teams), start, end).values("worker_id")
-    )
+    stretches = TeamMembership.objects.filter(overlapping(start, end), team__in=lead_teams(request))
+    return queryset.filter(pk__in=stretches.values("worker_id"))
 
 
 def period_json(group, start, end):
@@ -454,9 +443,8 @@ class TimesheetViewSet(viewsets.ViewSet):
             spans = {worker.pk: worker_spans for worker, worker_spans in by_worker.items()}
             workers = workers.filter(pk__in=list(spans))
         if data.get("team"):
-            workers = workers.filter(
-                pk__in=in_range(TeamMembership.objects.filter(team_id=data["team"]), start, end).values("worker_id")
-            )
+            stretches = TeamMembership.objects.filter(overlapping(start, end), team_id=data["team"])
+            workers = workers.filter(pk__in=stretches.values("worker_id"))
         if data.get("worker"):
             workers = workers.filter(pk=data["worker"])
         if is_team_lead(request):
@@ -539,9 +527,6 @@ class OtherWorkViewSet(CompanyScopedViewSet):
         if params.get("to"):
             queryset = queryset.filter(work_date__lte=params["to"])
         return queryset
-
-    def perform_create(self, serializer):
-        serializer.save(company=self.request.company)
 
     def perform_destroy(self, instance):
         delete_other_work(instance)

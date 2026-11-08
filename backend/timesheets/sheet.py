@@ -171,7 +171,7 @@ def build_timesheet(company, workers, start, end, spans=None, calendar=None):
                     {"type": "other", "id": row["id"], "kind": row["kind"], "hours": row["hours"], "note": row["note"]}
                 )
             for leave in leaves[worker.pk]:
-                if leave.covers(day):
+                if covers(leave, day):
                     if leave.status == Leave.Status.APPROVED:
                         entry.leave = leave
                     else:

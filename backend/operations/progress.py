@@ -8,6 +8,7 @@ from operations.models import SiteReport, Workplace, WorkType
 from operations.services import days_for, scopes_with_progress
 from sitelog.models import CrewAttendance
 from workforce.models import Team
+from workforce.services import week_start
 
 RECENT_WORKING_DAYS = 10
 WEEKS_SHOWN = 8
@@ -35,10 +36,6 @@ def add_working_days(start, count):
         if is_working_day(day):
             left -= 1
     return day
-
-
-def week_start(day):
-    return day - timedelta(days=day.weekday())
 
 
 def amount(value):
