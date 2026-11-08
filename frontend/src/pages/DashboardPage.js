@@ -2,11 +2,104 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { ProgressMeter, StatusBadge } from "../components/charts";
-import { ErrorText, PageHeader, formatDay, styles } from "../components/ui";
-import { useAuth } from "../context/AuthContext";
+import { formatMoney } from "../components/money";
+import { addDays, isoDate, parseDate } from "../components/ReportCalendar";
+import { Badge, ErrorText, PageHeader, companyToday, formatDay, styles } from "../components/ui";
+import { useAuth, useRole } from "../context/AuthContext";
+
+function OwedTile() {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    api("/pay/owed/")
+      .then(setRows)
+      .catch(() => setRows(null));
+  }, []);
+
+  if (!rows) return null;
+  const total = rows.reduce((sum, row) => sum + Math.max(0, Number(row.owed)), 0);
+  return (
+    <div style={styles.card}>
+      <h2>Owed to workers</h2>
+      <p style={{ margin: 0 }}>
+        <Link to="/pay">
+          {total > 0 ? `${formatMoney(total)} still to pay to ${rows.filter((row) => Number(row.owed) > 0).length} people` : "Everyone is paid up."}
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+function PeopleToday({ company, canManage }) {
+  const today = companyToday(company);
+  const yesterday = isoDate(addDays(parseDate(today), -1));
+  const [off, setOff] = useState([]);
+  const [waiting, setWaiting] = useState(0);
+  const [missing, setMissing] = useState([]);
+  const [due, setDue] = useState([]);
+
+  useEffect(() => {
+    // Loaded apart from the main dashboard, so one failing call can't blank the page.
+    api(`/days-off/?status=approved&from=${today}&to=${today}&page_size=100`)
+      .then((data) => setOff(data.results || []))
+      .catch(() => setOff([]));
+    api(`/timesheets/?from=${yesterday}&to=${yesterday}`)
+      .then((sheet) => setMissing(sheet.workers.filter((row) => row.cells[yesterday]?.flags.includes("missing"))))
+      .catch(() => setMissing([]));
+    if (canManage) {
+      api("/days-off/?status=requested&page_size=1")
+        .then((data) => setWaiting(data.count || 0))
+        .catch(() => setWaiting(0));
+      api("/timesheet-periods/due/")
+        .then((rows) => setDue(rows.filter((row) => row.status !== "approved")))
+        .catch(() => setDue([]));
+    }
+  }, [today, yesterday, canManage]);
+
+  return (
+    <div style={styles.card}>
+      <h2>People today</h2>
+      {off.length === 0 ? (
+        <p>Nobody is off today.</p>
+      ) : (
+        <p style={{ display: "flex", gap: "0.4rem 0.8rem", flexWrap: "wrap", alignItems: "center" }}>
+          <span>Off today:</span>
+          {off.map((row) => (
+            <span key={row.id}>
+              <Link to={`/workers/${row.worker}?tab=days-off`}>{row.worker_name}</Link> <Badge>{row.type_code}{row.half_day ? " ½" : ""}</Badge>
+            </span>
+          ))}
+        </p>
+      )}
+      {missing.length > 0 && (
+        <p>
+          <Link to="/timesheets">
+            {missing.length} {missing.length === 1 ? "person has" : "people have"} no hours for yesterday
+          </Link>
+          : {missing.map((row) => row.name).join(", ")}
+        </p>
+      )}
+      {canManage && waiting > 0 && (
+        <p>
+          <Link to="/days-off">
+            {waiting} day-off request{waiting === 1 ? "" : "s"} waiting for approval
+          </Link>
+        </p>
+      )}
+      {due.map((row) => (
+        <p key={row.pay_group}>
+          <Link to="/timesheets">
+            {row.name}, {formatDay(row.start)} – {formatDay(row.end)}: hours ready to approve
+          </Link>
+        </p>
+      ))}
+    </div>
+  );
+}
 
 function DashboardPage() {
   const { user } = useAuth();
+  const { canManage, isOwner } = useRole();
   const [stats, setStats] = useState(null);
   const [error, setError] = useState("");
   const company = user?.active_company;
@@ -80,6 +173,8 @@ function DashboardPage() {
               <strong style={{ fontFamily: "var(--font-display)", fontSize: "1.7rem" }}>{stats.expiring.length}</strong>
             </div>
           </div>
+          <PeopleToday company={company} canManage={canManage} />
+          {isOwner && <OwedTile />}
           <div style={styles.card}>
             <h2>Active projects</h2>
             {stats.portfolio.length === 0 ? (

@@ -11,4 +11,6 @@ urlpatterns = [
     path("api/", include("core.urls")),
     path("api/", include("work.urls")),
     path("api/", include("sitelog.urls")),
+    path("api/", include("timesheets.urls")),
+    path("api/", include("payroll.urls")),
 ]

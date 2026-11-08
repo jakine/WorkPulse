@@ -33,6 +33,17 @@ class IsCompanyOwner(IsCompanyMember):
         return request.membership.role == Membership.Role.OWNER
 
 
+class CanSeePay(IsCompanyMember):
+    """Pay is the owner's alone. Widen this one check to let managers in."""
+
+    message = "Only the owner can see pay."
+
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+        return request.membership.role == Membership.Role.OWNER
+
+
 class HasCompanyRole(IsCompanyMember):
     """Owners and managers may do everything; team leads may read, plus the view's `lead_actions`."""
 

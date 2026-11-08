@@ -23,27 +23,47 @@ const crewBlock = {
   borderRadius: "var(--radius-sm)",
 };
 
-function presentIds(team) {
-  return team.crew.filter((worker) => worker.present).map((worker) => worker.worker);
+function savedHours(team) {
+  const hours = {};
+  for (const worker of team.crew) if (worker.present) hours[worker.worker] = String(Number(worker.hours));
+  return hours;
 }
 
 function CrewBlock({ team, editable, onSave }) {
-  const [chosen, setChosen] = useState(() => new Set(presentIds(team)));
+  const [chosen, setChosen] = useState(() => savedHours(team));
 
   useEffect(() => {
-    setChosen(new Set(presentIds(team)));
+    setChosen(savedHours(team));
   }, [team]);
 
-  const saved = presentIds(team);
-  const changed = saved.length !== chosen.size || saved.some((id) => !chosen.has(id));
+  const saved = savedHours(team);
+  const changed =
+    Object.keys(saved).length !== Object.keys(chosen).length || Object.entries(chosen).some(([id, hours]) => saved[id] !== hours);
 
-  function toggle(workerId) {
+  function toggle(worker) {
     setChosen((current) => {
-      const next = new Set(current);
-      if (next.has(workerId)) next.delete(workerId);
-      else next.add(workerId);
+      const next = { ...current };
+      if (worker.worker in next) delete next[worker.worker];
+      else next[worker.worker] = String(Number(worker.expected_hours));
       return next;
     });
+  }
+
+  function allPresent() {
+    setChosen((current) => {
+      const next = { ...current };
+      for (const worker of team.crew) {
+        const fullDayOff = worker.off && !worker.off.half_day;
+        if (!(worker.worker in next) && !fullDayOff) next[worker.worker] = String(Number(worker.expected_hours));
+      }
+      return next;
+    });
+  }
+
+  function save() {
+    const hours = {};
+    for (const [id, value] of Object.entries(chosen)) hours[id] = Number(value);
+    onSave(team.team, Object.keys(chosen).map(Number), hours);
   }
 
   return (
@@ -60,24 +80,46 @@ function CrewBlock({ team, editable, onSave }) {
       {team.crew.length === 0 ? (
         <p style={{ margin: 0, color: "var(--muted)" }}>No registered workers in this team.</p>
       ) : (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem 1.1rem" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 1.2rem" }}>
           {team.crew.map((worker) => (
-            <label key={worker.worker} style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
-              <input
-                type="checkbox"
-                checked={chosen.has(worker.worker)}
-                disabled={!editable}
-                onChange={() => toggle(worker.worker)}
-              />
-              {worker.name}
+            <span key={worker.worker} style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+              <label style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+                <input type="checkbox" checked={worker.worker in chosen} disabled={!editable} onChange={() => toggle(worker)} />
+                {worker.name}
+              </label>
               {!worker.member && <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>(other team)</span>}
-            </label>
+              {worker.off && (
+                <Badge color="var(--warn)">
+                  {worker.off.code ? `Off · ${worker.off.name}` : "Off"}
+                  {worker.off.half_day ? " (half day)" : ""}
+                </Badge>
+              )}
+              {worker.worker in chosen && (
+                <>
+                  <input
+                    type="number"
+                    min="0.25"
+                    max="24"
+                    step="0.25"
+                    value={chosen[worker.worker]}
+                    disabled={!editable}
+                    aria-label={`Hours for ${worker.name}`}
+                    onChange={(e) => setChosen((current) => ({ ...current, [worker.worker]: e.target.value }))}
+                    style={{ ...styles.input, width: "4rem", minWidth: 0, padding: "0.15rem 0.35rem" }}
+                  />
+                  <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>h</span>
+                </>
+              )}
+            </span>
           ))}
         </div>
       )}
       {editable && team.crew.length > 0 && (
-        <div>
-          <button type="button" style={styles.quiet} disabled={!changed} onClick={() => onSave(team.team, [...chosen])}>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button type="button" style={styles.quiet} onClick={allPresent}>
+            All present
+          </button>
+          <button type="button" style={styles.quiet} disabled={!changed} onClick={save}>
             Save crew
           </button>
         </div>
@@ -116,8 +158,10 @@ function DayLog({ day, workplaceId, workDate, onDay }) {
     return api(`/daily-logs/day/?workplace=${workplaceId}&date=${workDate}`);
   }
 
-  function saveCrew(teamId, workerIds) {
-    run(() => api("/daily-logs/attendance/", { method: "PUT", body: { ...where, team: teamId, worker_ids: workerIds } }));
+  function saveCrew(teamId, workerIds, hours) {
+    run(() =>
+      api("/daily-logs/attendance/", { method: "PUT", body: { ...where, team: teamId, worker_ids: workerIds, hours } })
+    );
   }
 
   function saveNotes(event) {

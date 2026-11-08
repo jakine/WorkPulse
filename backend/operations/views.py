@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.db.models import DecimalField, OuterRef, Prefetch, Subquery, Sum
 from django.db.models.functions import Coalesce
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -109,6 +110,11 @@ class WorkplaceViewSet(CompanyScopedViewSet):
         workplace = serializer.save()
         sync_workplace_location(workplace)
         serializer.instance = _with_progress(Workplace.objects.filter(pk=workplace.pk)).get()
+
+    def perform_destroy(self, instance):
+        if instance.attendance.exists():
+            raise ValidationError("This project has crew hours recorded, which pay depends on. Mark it completed instead.")
+        instance.delete()
 
     def retrieve(self, request, *args, **kwargs):
         workplace = self.get_object()

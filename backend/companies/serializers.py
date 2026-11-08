@@ -12,7 +12,7 @@ class CompanyCreateSerializer(serializers.Serializer):
 class CompanySettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
-        fields = ["id", "name", "timezone"]
+        fields = ["id", "name", "timezone", "leave_days_per_year"]
 
     def validate_name(self, name):
         name = name.strip()

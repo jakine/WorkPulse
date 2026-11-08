@@ -497,3 +497,27 @@ button {
     padding-right: 1.1rem;
   }
 }
+
+@media print {
+  .app-sidebar,
+  .app-topbar,
+  .no-print {
+    display: none !important;
+  }
+
+  .app-shell {
+    display: block;
+  }
+
+  .app-content {
+    max-width: none;
+    padding: 0;
+  }
+
+  body,
+  .payslip {
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+}

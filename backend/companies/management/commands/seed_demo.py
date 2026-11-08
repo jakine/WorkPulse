@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -42,6 +42,23 @@ from operations.services import (
 from work.models import Task, TaskPhase, TaskStatus
 from work.services import create_default_phases, create_default_statuses, create_task
 from sitelog.models import CrewAttendance, DailyLog, DailyLogIssue
+from payroll.models import PayAdjustment, PayRate, PayRun, PaySettings, Payment
+from payroll.services import approve_pay
+from sitelog.services import fill_from_schedule
+from timesheets.leave import create_default_leave_types
+from timesheets.models import (
+    Holiday,
+    Leave,
+    OtherWork,
+    PayGroup,
+    PayGroupAssignment,
+    ScheduleAssignment,
+    TimesheetPeriod,
+    WorkSchedule,
+    WorkScheduleVersion,
+)
+from timesheets.periods import approve_period, default_pay_group, move_to_pay_group
+from timesheets.services import assign_schedule, create_default_schedule
 from workforce.models import Team, TeamMembership, Worker, WorkerType
 from workforce.services import move_worker
 
@@ -86,6 +103,9 @@ class Command(BaseCommand):
             create_default_work_categories(company)
             create_default_statuses(company)
             create_default_phases(company)
+            create_default_schedule(company)
+            create_default_leave_types(company)
+            default_pay_group(company)
 
         office = user("office@example.com")
         mira = user("mira@example.com")
@@ -367,7 +387,7 @@ class Command(BaseCommand):
         ):
             for name in names:
                 CrewAttendance.objects.get_or_create(
-                    workplace=workplace, work_date=day, worker=people[name], defaults={"team": team}
+                    workplace=workplace, work_date=day, worker=people[name], defaults={"team": team, "hours": Decimal("8")}
                 )
         approved, created = DailyLog.objects.get_or_create(
             workplace=bridge,
@@ -427,6 +447,8 @@ class Command(BaseCommand):
                 note="East elevation starts next week",
             )
 
+        self._people_and_pay(company, owner, mira)
+
         self.stdout.write(self.style.SUCCESS(f"Demo data is ready for {company.name}."))
         self.stdout.write("Log in as:")
         self.stdout.write(f"  owner      manager@example.com / {DEMO_PASSWORD}")
@@ -435,6 +457,150 @@ class Command(BaseCommand):
         self.stdout.write(f"  team lead  arben@example.com / {DEMO_PASSWORD}  (team 2)")
         self.stdout.write(f"  team lead  lira@example.com / {DEMO_PASSWORD}   (team 3)")
         self.stdout.write("Walk through Projects → Bridge site (overview, board, timeline, teams, reports, stock).")
+        self.stdout.write("People: Timesheet (Weekly crew, week of 26 Oct is open), Days off, and Pay as the owner.")
+
+    def _people_and_pay(self, company, owner, lead):
+        """Schedules, days off, a month of hours, two pay groups and pay. Safe to run again."""
+        people = {worker.name: worker for worker in Worker.objects.filter(company=company)}
+        hired = {
+            "Mira": date(2026, 3, 1),
+            "Niko": date(2026, 3, 1),
+            "Besnik": date(2026, 3, 1),
+            "Drita": date(2026, 3, 1),
+            "Arben": date(2026, 5, 1),
+            "Genti": date(2026, 5, 1),
+            "Valon": date(2026, 5, 1),
+            "Lira": date(2026, 9, 1),
+            "Ana": date(2026, 9, 1),
+        }
+        for name, day in hired.items():
+            worker = people[name]
+            if worker.hired_on is None:
+                worker.hired_on = day
+                worker.save(update_fields=["hired_on"])
+
+        create_default_schedule(company)
+        six_days, created = WorkSchedule.objects.get_or_create(company=company, name="Six days")
+        if created:
+            WorkScheduleVersion.objects.create(
+                schedule=six_days, mon=8, tue=8, wed=8, thu=8, fri=8, sat=Decimal("5"), day_hours=Decimal("8")
+            )
+        if not ScheduleAssignment.objects.filter(schedule=six_days).exists():
+            assign_schedule(company, six_days, [people["Arben"], people["Genti"]], date(2026, 9, 1))
+        for day, name in (
+            (date(2026, 1, 1), "New Year's Day"),
+            (date(2026, 5, 1), "Labour Day"),
+            (date(2026, 12, 25), "Christmas Day"),
+        ):
+            Holiday.objects.get_or_create(company=company, date=day, defaults={"name": name})
+
+        types = {leave_type.code: leave_type for leave_type in create_default_leave_types(company)}
+        monthly = default_pay_group(company)
+        weekly, _ = PayGroup.objects.get_or_create(company=company, name="Weekly crew", defaults={"cycle": PayGroup.Cycle.WEEKLY})
+        for name in ("Mira", "Niko", "Besnik", "Drita", "Arben", "Genti"):
+            if not PayGroupAssignment.objects.filter(worker=people[name], pay_group=weekly).exists():
+                move_to_pay_group(people[name], weekly, date(2026, 9, 28))
+
+        decided = timezone.now()
+        for name, code, start, end, half_day, approved in (
+            ("Niko", "V", date(2026, 10, 19), date(2026, 10, 21), False, True),
+            ("Drita", "S", date(2026, 10, 7), date(2026, 10, 7), False, True),
+            ("Ana", "V", date(2026, 10, 23), date(2026, 10, 23), True, True),
+            ("Besnik", "V", date(2026, 11, 9), date(2026, 11, 10), False, False),
+        ):
+            Leave.objects.get_or_create(
+                company=company,
+                worker=people[name],
+                start_date=start,
+                defaults={
+                    "leave_type": types[code],
+                    "end_date": end,
+                    "half_day": half_day,
+                    "status": Leave.Status.APPROVED if approved else Leave.Status.REQUESTED,
+                    "requested_by": owner if approved else lead,
+                    "decided_by": owner if approved else None,
+                    "decided_at": decided if approved else None,
+                    "note": "" if approved else "Family wedding",
+                },
+            )
+
+        structure = Team.objects.get(company=company, number=2)
+        bridge = structure.workplace_assignments.select_related("workplace").first().workplace
+        for name in ("Arben", "Genti"):
+            CrewAttendance.objects.get_or_create(
+                workplace=bridge,
+                work_date=date(2026, 10, 8),
+                worker=people[name],
+                defaults={"team": structure, "hours": Decimal("8")},
+            )
+        for name, day, hours in (
+            ("Mira", date(2026, 10, 8), "10"),
+            ("Niko", date(2026, 10, 8), "9"),
+            ("Lira", date(2026, 10, 14), "9.5"),
+        ):
+            CrewAttendance.objects.filter(worker=people[name], work_date=day).update(hours=Decimal(hours))
+        OtherWork.objects.get_or_create(
+            company=company,
+            worker=people["Niko"],
+            work_date=date(2026, 10, 17),
+            kind=OtherWork.Kind.YARD,
+            defaults={"hours": Decimal("5"), "note": "Sorted the yard for winter", "created_by": owner},
+        )
+        for worker in people.values():
+            fill_from_schedule(worker, date(2026, 9, 28), date(2026, 11, 1))
+
+        rates = {
+            "Mira": ("daily", "80"),
+            "Niko": ("daily", "60"),
+            "Besnik": ("daily", "70"),
+            "Drita": ("daily", "65"),
+            "Arben": ("daily", "85"),
+            "Genti": ("daily", "60"),
+            "Lira": ("monthly", "1500"),
+            "Ana": ("monthly", "1300"),
+            "Valon": ("monthly", "1400"),
+        }
+        for name, (pay_type, amount) in rates.items():
+            PayRate.objects.get_or_create(
+                company=company,
+                worker=people[name],
+                start_date=date(2026, 1, 1),
+                defaults={"pay_type": pay_type, "amount": Decimal(amount), "created_by": owner},
+            )
+        PaySettings.objects.get_or_create(company=company, defaults={"extra_hours_multiplier": Decimal("1.25")})
+
+        for week in range(4):
+            start = date(2026, 9, 28) + timedelta(weeks=week)
+            end = start + timedelta(days=6)
+            if not TimesheetPeriod.objects.filter(pay_group=weekly, start_date=start, status=TimesheetPeriod.Status.APPROVED).exists():
+                approve_period(weekly, start, end, owner)
+            if not PayRun.objects.filter(period__pay_group=weekly, period__start_date=start, status=PayRun.Status.APPROVED).exists():
+                run = approve_pay(weekly, start, end, owner)
+                for line in run.lines.all():
+                    if line.to_pay > 0:
+                        Payment.objects.get_or_create(
+                            company=company,
+                            worker=line.worker,
+                            paid_on=end + timedelta(days=1),
+                            kind=Payment.Kind.WAGES,
+                            defaults={"amount": line.to_pay, "method": Payment.Method.CASH, "created_by": owner},
+                        )
+        Payment.objects.get_or_create(
+            company=company,
+            worker=people["Niko"],
+            paid_on=date(2026, 10, 28),
+            kind=Payment.Kind.ADVANCE,
+            defaults={"amount": Decimal("100"), "method": Payment.Method.CASH, "note": "Asked for cash midweek", "created_by": owner},
+        )
+        PayAdjustment.objects.get_or_create(
+            company=company,
+            worker=people["Lira"],
+            date=date(2026, 10, 31),
+            kind=PayAdjustment.Kind.BONUS,
+            defaults={"amount": Decimal("100"), "note": "School grid finished early", "created_by": owner},
+        )
+        if not TimesheetPeriod.objects.filter(pay_group=monthly, start_date=date(2026, 10, 1), status=TimesheetPeriod.Status.APPROVED).exists():
+            approve_period(monthly, date(2026, 10, 1), date(2026, 10, 31), owner)
 
     def _sheet_column(self, workplace, kind, *, name="", scope=None, team=None, position=0):
         if workplace is None:
