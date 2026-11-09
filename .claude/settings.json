@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sort -k2)",
+      "Bash(git ls-tree *)",
+      "Bash(cd /private/tmp/claude-502/-Users-niki-Desktop-workpulse/b13d0411-6cc7-4c15-96b1-419a8b496dca/scratchpad/merged && sed -n '/function navGroups/,/^}/p' frontend/src/components/Layout.js; echo ====; cat backend/companies/viewsets.py; echo ====; sed -n 1,60p backend/companies/permissions.py; echo ====; cat backend/timesheets/locks.py; echo ====; grep -n \"def work_value\" -A8 backend/timesheets/sheet.py; echo ====; grep -n \"def ensure_day_open\" -A6 backend/sitelog/services.py)",
+      "Bash(sed -n '/^def set_attendance/,/^def team_on/p' sitelog/services.py)",
+      "Bash(sed -n '/^def approve_pay/,/^def reopen_pay/p' payroll/services.py)",
+      "Bash(grep -vE \"^import|^$\")",
+      "Bash(awk '{a+=$1; d+=$2} END {print a, d}')",
+      "Bash(grep -rhoE '\"/[a-z-]+/[^\"`]*|`/[a-z-]+/[^`]*' pages components)",
+      "Bash(docker inspect *)",
+      "Bash(awk ' *)",
+      "Bash(docker exec *)",
+      "Bash(echo \"rows: $?\")",
+      "Bash(sh /private/tmp/claude-502/-Users-niki-Desktop-workpulse/479bce6b-85d0-4cd5-b650-d2009525d883/scratchpad/snap/test.sh)",
+      "Bash(git fetch *)",
+      "Bash(git diff *)",
+      "Bash(awk '$1==\"A\"{print $2}')",
+      "Bash(awk '$1==\"A\"')",
+      "Bash(awk '{print $2}')",
+      "Bash(awk '{print $1, $3}')",
+      "Bash(gh pr *)",
+      "Bash(grep -rnoE '\"/\\(other-work|days-off|payments|pay-adjustments|schedule-assignments|schedules|holidays|pay-rates\\)/[^\"`]*|`/\\(other-work|days-off|payments|pay-adjustments|schedule-assignments|schedules|holidays|pay-rates\\)/[^`]*`' frontend/src)",
+      "Bash(docker compose *)",
+      "Bash(grep -vE \"^\\\\s*$\")"
+    ],
+    "additionalDirectories": [
+      "/private/tmp/claude-502/-Users-niki-Desktop-workpulse/479bce6b-85d0-4cd5-b650-d2009525d883/scratchpad/wt/backend/companies/management/commands"
+    ]
+  }
+}
